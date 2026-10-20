@@ -1,0 +1,10 @@
+{
+  "appId": "com.beltrun.draglegends",
+  "appName": "Belt Run",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0b0c0f",
+    "scrollEnabled": false
+  }
+}

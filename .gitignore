@@ -1,0 +1,4 @@
+node_modules/
+shots/
+.DS_Store
+ios/App/App/public/

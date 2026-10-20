@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0b0c0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Belt Run">
+<meta name="description" content="Drag racing with real physics: 67 cars, upgrades, tuning, manual shifting.">
+<title>Belt Run: Drag Legends</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+  <!-- top bar -->
+  <header id="topbar">
+    <button id="nav-back" class="icon-btn" aria-label="Back" hidden>‹</button>
+    <div class="brand"><b>BELT RUN</b><span>DRAG LEGENDS</span></div>
+    <h1 id="screen-title"></h1>
+    <div class="top-right">
+      <div class="pill" id="pill-wins" title="Career wins">🏁 <b id="wins">0</b></div>
+      <div class="pill cash" title="Race cash">$<b id="cash">0</b></div>
+      <button id="btn-mute" class="icon-btn" aria-label="Sound">🔊</button>
+      <button id="btn-settings" class="icon-btn" aria-label="Settings">⚙</button>
+    </div>
+  </header>
+
+  <!-- GARAGE (home) -->
+  <section id="scr-garage" class="screen">
+    <div class="garage-stage">
+      <button class="car-arrow left" id="car-prev" aria-label="Previous car">‹</button>
+      <canvas id="garage-canvas" aria-label="Your car"></canvas>
+      <button class="car-arrow right" id="car-next" aria-label="Next car">›</button>
+      <div class="garage-name"><small id="g-make"></small><strong id="g-name"></strong><em id="g-note"></em></div>
+      <div class="garage-stats" id="g-stats"></div>
+    </div>
+    <nav class="garage-nav">
+      <button data-go="upgrades"><i>⬆</i>UPGRADE</button>
+      <button data-go="tune"><i>⚙</i>TUNE</button>
+      <button class="primary" data-go="races"><i>🏁</i>RACE</button>
+      <button data-go="dealer"><i>$</i>DEALER</button>
+      <button data-go="mycars"><i>▤</i>MY CARS</button>
+    </nav>
+  </section>
+
+  <!-- RACE SELECT -->
+  <section id="scr-races" class="screen" hidden>
+    <div class="tabs" id="race-tabs">
+      <button data-tab="career" class="on">CAREER</button>
+      <button data-tab="quick">QUICK RACE</button>
+      <button data-tab="honda">HONDA CUP</button>
+      <button data-tab="test">TEST PASS</button>
+    </div>
+    <div id="race-body" class="race-body"></div>
+  </section>
+
+  <!-- UPGRADES -->
+  <section id="scr-upgrades" class="screen split" hidden>
+    <aside class="side">
+      <img id="up-img" alt="">
+      <div class="statgrid" id="up-stats"></div>
+    </aside>
+    <div class="main">
+      <div class="upgrade-grid" id="up-grid"></div>
+      <div class="up-detail" id="up-detail"></div>
+    </div>
+  </section>
+
+  <!-- TUNE -->
+  <section id="scr-tune" class="screen split" hidden>
+    <aside class="side">
+      <canvas id="dyno" aria-label="Dyno chart"></canvas>
+      <div class="statgrid" id="tune-pred"></div>
+      <div class="row-btns"><button id="tune-robot" class="ghost">PREDICT ET</button><button id="tune-drive" class="primary">TEST PASS ▸</button></div>
+    </aside>
+    <div class="main scroll" id="tune-body"></div>
+  </section>
+
+  <!-- DEALER -->
+  <section id="scr-dealer" class="screen" hidden>
+    <div class="chips" id="dealer-chips"></div>
+    <div class="cards" id="dealer-cards"></div>
+  </section>
+
+  <!-- MY CARS -->
+  <section id="scr-mycars" class="screen" hidden>
+    <div class="cards" id="mycars-cards"></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="scr-settings" class="screen" hidden>
+    <div class="settings scroll" id="settings-body"></div>
+  </section>
+
+  <!-- RACE -->
+  <section id="race" hidden>
+    <canvas id="race-canvas"></canvas>
+    <div class="race-top">
+      <button id="btn-pause" class="icon-btn" aria-label="Pause">❚❚</button>
+      <div class="race-title"><span id="race-title"></span> · <span id="race-dist"></span></div>
+      <div class="race-timer" id="race-timer">0.000</div>
+    </div>
+    <div id="race-msg" class="race-msg"></div>
+    <button id="btn-down" class="ctl down" aria-label="Downshift">▼</button>
+    <button id="btn-shift" class="ctl shift" aria-label="Shift up">SHIFT<br>▲</button>
+    <button id="btn-nos" class="ctl nos" aria-label="Nitrous">N₂O</button>
+    <button id="btn-gas" class="ctl gas" aria-label="Throttle"><span>GAS</span></button>
+    <div id="race-pause" class="modal" hidden>
+      <div class="card"><h2>PAUSED</h2><div class="row-btns"><button id="pause-quit" class="ghost">QUIT RACE</button><button id="pause-resume" class="primary">RESUME</button></div></div>
+    </div>
+  </section>
+
+  <div id="modal" class="modal" hidden><div class="card" id="modal-card"></div></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="rotate"><div><div class="phone"></div><b>ROTATE YOUR PHONE</b><span>Belt Run plays in landscape.</span></div></div>
+</div>
+<script src="js/audio/profiles.js"></script>
+<script src="js/audio/engine-dsp.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
