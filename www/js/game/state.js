@@ -110,7 +110,7 @@ export function applyResult(s, { kind, ev = null, cls = 1, result, carId = s.cur
   let payout = 0, firstWin = false;
   if (kind === 'event') {
     if (won) { firstWin = !s.done[ev.id]; payout = firstWin ? ev.reward : Math.round(ev.reward * 0.25 / 25) * 25; s.done[ev.id] = true; }
-  } else if (kind === 'quick') {
+  } else if (kind === 'quick' || kind === 'online') {
     payout = won ? (purse ?? quickReward(cls)) + bet : -Math.min(bet, s.cash);
   }
   if (kind !== 'test') { if (won) s.wins++; else s.losses++; }

@@ -6,6 +6,7 @@ import { simulateRun, DIST_LABEL, MS_TO_MPH } from './sim/race.js';
 import { drawCar, loadSprite, onSpriteLoad } from './render/sprites.js';
 import { startRace, haptic } from './game/raceScreen.js';
 import * as Audio from './audio/audio.js';
+import { createOnline } from './net/online.js';
 
 const $ = id => document.getElementById(id);
 const money = n => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
@@ -131,6 +132,7 @@ function renderRaces() {
     });
     const on = body.querySelector('.ev:not(.done):not(.locked)'); on?.scrollIntoView({ inline: 'center', block: 'nearest' });
   } else if (raceTab === 'quick') renderQuick(body, car, myCls);
+  else if (raceTab === 'online') renderOnline(body, car);
   else renderTest(body, car);
 }
 
@@ -197,30 +199,108 @@ function results(cfg, race) {
   const out = applyResult(S, { kind: cfg.kind, ev: cfg.ev || null, cls: cfg.cls || classOf(CAR_BY_ID[carId]), result: r, carId, distance: cfg.distance, bet: cfg.bet || 0, purse: cfg.purse ?? null });
   persist();
   const p = r.player, o = r.opponent, won = out.won;
-  const title = cfg.kind === 'test' ? 'TIME SLIP' : won ? (cfg.ev?.boss ? 'BOSS BEATEN!' : 'YOU WIN') : 'YOU LOSE';
+  const title = cfg.kind === 'test' ? 'TIME SLIP' : cfg.kind === 'online' && r.online ? (won ? 'YOU BEAT ' + esc(String(r.online.rival || 'YOUR RIVAL')).toUpperCase() : esc(String(r.online.rival || 'YOUR RIVAL')).toUpperCase() + ' WINS') : won ? (cfg.ev?.boss ? 'BOSS BEATEN!' : 'YOU WIN') : 'YOU LOSE';
   const launchQ = { perfect: 'PERFECT', good: 'GOOD', bog: 'BOGGED', spin: 'SPUN' }[p.launch?.q] || '—';
   const unlocks = CARS.filter(c => c.wins && S.wins === c.wins && won && cfg.kind !== 'test');
+  const rivalLbl = cfg.kind === 'online' && r.online ? esc(String(r.online.rival || 'RIVAL')).toUpperCase() + ' ET' : 'RIVAL ET';
   modal(`<h2 class="${cfg.kind === 'test' ? '' : won ? 'win' : 'lose'}">${title}</h2>
     <p>${esc(CAR_BY_ID[carId].name)} · ${VENUES[cfg.venue].name} · ${DIST_LABEL[cfg.distance]}${o ? ` · margin ${r.margin != null ? r.margin.toFixed(3) + ' s' : '—'}` : ''}${out.pb ? ' · <b style="color:var(--accent)">NEW PERSONAL BEST</b>' : ''}</p>
     <div class="slip">
       <div>ET<b>${fmt3(p.et)}</b></div><div>TRAP<b>${trapU(p.trap)}</b></div><div>60 FT<b>${fmt3(p.ft60)}</b></div><div>330 FT<b>${fmt3(p.ft330)}</b></div>
       <div>⅛ MILE<b>${fmt3(p.eighth)}</b></div><div>LAUNCH<b>${launchQ}</b></div><div>SHIFTS<b>${p.perfectShifts}/${p.shifts} <small>perfect</small></b></div>
-      ${o ? `<div class="vs">RIVAL ET<b>${fmt3(o.et)}</b></div>` : `<div>N₂O USED<b>${p.nosUsed ? p.nosUsed.toFixed(1) + '<small> s</small>' : '—'}</b></div>`}
+      ${o ? `<div class="vs">${rivalLbl}<b>${o.et ? fmt3(o.et) : 'DNF'}</b></div>` : `<div>N₂O USED<b>${p.nosUsed ? p.nosUsed.toFixed(1) + '<small> s</small>' : '—'}</b></div>`}
     </div>
     ${cfg.kind !== 'test' ? `<div class="payout ${out.payout < 0 ? 'neg' : ''}">${out.payout >= 0 ? '+' : ''}${money(out.payout)}${out.firstWin ? ' <small style="font-size:14px;color:var(--dim)">EVENT PRIZE</small>' : ''}</div>` : ''}
     ${unlocks.map(c => `<p>🔓 <b>${esc(c.name)}</b> is now available at the Dealer.</p>`).join('')}
-    <div class="row-btns" style="margin-top:10px"><button class="ghost" id="rs-garage">GARAGE</button><button class="ghost" id="rs-up">UPGRADE</button><button class="primary" id="rs-again">${won && cfg.kind === 'event' ? 'NEXT ▸' : 'RACE AGAIN ▸'}</button></div>`, c => {
+    <div class="row-btns" style="margin-top:10px"><button class="ghost" id="rs-garage">GARAGE</button><button class="ghost" id="rs-up">UPGRADE</button><button class="primary" id="rs-again">${cfg.kind === 'online' ? 'BACK TO LOBBY ▸' : won && cfg.kind === 'event' ? 'NEXT ▸' : 'RACE AGAIN ▸'}</button></div>`, c => {
     c.querySelector('#rs-garage').onclick = () => { closeModal(); go('garage'); };
     c.querySelector('#rs-up').onclick = () => { closeModal(); go('upgrades'); };
     c.querySelector('#rs-again').onclick = () => {
       closeModal();
       if (won && cfg.kind === 'event') { go('races'); return; }
+      if (cfg.kind === 'online') { raceTab = 'online'; go('races'); return; }
       if (cfg.kind === 'quick' && cfg.bet > S.cash) cfg.bet = 0;
       launch(cfg);
     };
   });
   go(screen === 'garage' ? 'garage' : screen);
 }
+
+
+// ───────────────────────── online (head-to-head with another phone) ─────────────────────────
+const net = createOnline();
+let onlineCode = new URLSearchParams(location.search).get('room') || '';
+const carPayload = () => { const o = S.owned[S.current]; return { id: S.current, lv: o.lv, tune: o.tune, hp: hpOf(carBuild()) }; };
+const myName = () => (S.settings.name || '').trim() || 'Racer';
+async function ensureOnline() { if (net.status === 'online') { net.send({ t: 'hello', name: myName(), car: carPayload() }); return true; } return net.connect({ name: myName(), car: carPayload() }); }
+net.onChange(() => { if (screen === 'races' && raceTab === 'online' && !document.body.classList.contains('racing')) renderRaces(); });
+net.on('notice', m => toast(m.msg));
+net.on('error', m => toast(m.msg));
+net.on('start', m => {
+  closeModal();
+  const opp = m.players[1 - m.seat], oc = CAR_BY_ID[opp.car?.id] || CAR_BY_ID.f82, env = VENUES[m.venue] || VENUES.ny;
+  const oppBc = buildCar(oc, opp.car?.lv || {}, opp.car?.tune || {}, env);
+  const cfg = { kind: 'online', venue: m.venue, distance: m.distance, opp: null, title: 'Online · vs ' + opp.name, purse: Math.round(quickReward(classOf(CAR_BY_ID[S.current])) * 1.2 / 25) * 25 };
+  Audio.unlock();
+  startRace({ player: { car: CAR_BY_ID[S.current], bc: carBuild(S.current, env) }, distance: m.distance, venue: m.venue, settings: S.settings, title: cfg.title,
+    online: { net, seat: m.seat, startPerf: net.perfAt(m.at), opp: { car: oc, bc: oppBc, name: opp.name } },
+    onFinish: race => results(cfg, race), onQuit: () => { toast('You left the race — counted as a loss for this run'); raceTab = 'online'; go('races'); } });
+});
+
+function renderOnline(body, car) {
+  const room = net.room, R = net.status;
+  if (R !== 'online') {
+    body.innerHTML = `<div class="online">
+      <div class="on-intro"><b>Race a real person.</b> Both phones start the countdown together; each of you drives your own car with your own upgrades and tune. Lowest time wins ${money(Math.round(quickReward(classOf(car)) * 1.2 / 25) * 25)}.</div>
+      <div class="setrow"><label for="on-name">Your racer name</label><input id="on-name" maxlength="16" autocomplete="nickname" value="${esc(S.settings.name || '')}" placeholder="Racer"></div>
+      <div class="row-btns"><button class="primary" id="on-connect">${R === 'connecting' ? 'CONNECTING…' : 'GO ONLINE ▸'}</button></div>
+      ${net.error ? `<p class="hint" style="color:var(--bad)">${esc(net.error)}</p>` : ''}</div>`;
+    const nameIn = $('on-name');
+    nameIn.onchange = () => { S.settings.name = nameIn.value.trim().slice(0, 16); persist(); };
+    $('on-connect').onclick = async () => { S.settings.name = nameIn.value.trim().slice(0, 16); persist(); if (await ensureOnline() && onlineCode) net.send({ t: 'join', code: onlineCode }); };
+    return;
+  }
+  if (!room) {
+    body.innerHTML = `<div class="online">
+      <div class="on-intro">Racing as <b>${esc(myName())}</b> in your <b>${esc(car.name)}</b> (${hpOf(carBuild())} HP). Change car in My Cars before you join.</div>
+      <div class="on-grid">
+        <button class="primary" id="on-find">${net.queued ? 'SEARCHING… TAP TO STOP' : 'FIND A RACER ▸'}</button>
+        <button class="btn" id="on-create">CREATE A ROOM</button>
+        <div class="on-join"><input id="on-code" maxlength="4" placeholder="CODE" value="${esc(onlineCode)}" autocapitalize="characters" autocomplete="off"><button class="btn" id="on-join">JOIN</button></div>
+      </div>
+      <p class="hint">Make a room and send the 4-letter code (or link) to a friend, or tap Find a racer to be paired with anyone who is searching.</p></div>`;
+    $('on-find').onclick = async () => { await ensureOnline(); net.send({ t: net.queued ? 'unqueue' : 'queue' }); };
+    $('on-create').onclick = async () => { await ensureOnline(); net.send({ t: 'create' }); };
+    $('on-join').onclick = async () => { const c = $('on-code').value.trim().toUpperCase(); if (c.length !== 4) { toast('Enter the 4-letter room code'); return; } onlineCode = c; await ensureOnline(); net.send({ t: 'join', code: c }); };
+    return;
+  }
+  const me = room.players[room.you], them = room.players[1 - room.you], host = room.you === 0;
+  const pcard = (p, label) => {
+    if (!p) return `<div class="on-p empty"><span class="mk">${label}</span><b>Waiting for a rival…</b><span class="hint">Share the code ${esc(room.code)}</span></div>`;
+    const c = CAR_BY_ID[p.car?.id];
+    return `<div class="on-p ${p.ready ? 'ready' : ''}"><span class="mk">${label}${p.wins ? ' · ' + p.wins + ' WIN' + (p.wins > 1 ? 'S' : '') : ''}</span><img src="${c ? thumb(c) : ''}" alt=""><b>${esc(p.name)}</b><span>${c ? esc(c.name) : '—'} · ${Math.round(p.car?.hp || 0)} HP</span><span class="badge ${p.ready ? 'go' : ''}">${p.ready ? 'READY' : p.connected === false ? 'OFFLINE' : 'NOT READY'}</span></div>`;
+  };
+  const link = location.origin + location.pathname + '?room=' + room.code;
+  body.innerHTML = `<div class="online room">
+    <div class="on-code"><span>ROOM</span><b>${esc(room.code)}</b><button class="btn" id="on-share">SHARE LINK</button><button class="ghost" id="on-leave">LEAVE</button></div>
+    <div class="on-players">${pcard(me, 'YOU')}<div class="x">VS</div>${pcard(them, 'RIVAL')}</div>
+    <div class="on-set">
+      <div class="seg">${['eighth', 'quarter', 'half'].map(k => `<button data-od="${k}" class="${room.distance === k ? 'on' : ''}" ${host ? '' : 'disabled'}>${DIST_LABEL[k]}</button>`).join('')}</div>
+      <div class="seg">${Object.values(VENUES).map(v => `<button data-ov="${v.id}" class="${room.venue === v.id ? 'on' : ''}" ${host ? '' : 'disabled'}>${v.id.toUpperCase()}</button>`).join('')}</div>
+      <button class="primary" id="on-ready" ${them ? '' : 'disabled'}>${me.ready ? 'CANCEL READY' : 'READY ▸'}</button>
+    </div>
+    <p class="hint">${host ? 'You pick the distance and venue.' : 'The room host picks the distance and venue.'} The race starts when both of you tap Ready.</p></div>`;
+  body.querySelectorAll('[data-od]').forEach(b => b.onclick = () => net.send({ t: 'settings', distance: b.dataset.od, venue: room.venue }));
+  body.querySelectorAll('[data-ov]').forEach(b => b.onclick = () => net.send({ t: 'settings', distance: room.distance, venue: b.dataset.ov }));
+  $('on-ready').onclick = () => { Audio.unlock(); net.send({ t: 'ready', ready: !me.ready, car: carPayload() }); };
+  $('on-leave').onclick = () => { onlineCode = ''; net.send({ t: 'leave' }); };
+  $('on-share').onclick = async () => {
+    const text = `Race me in Belt Run! Room ${room.code}: ${link}`;
+    try { if (navigator.share) { await navigator.share({ title: 'Belt Run race', text, url: link }); return; } } catch { return; }
+    try { await navigator.clipboard.writeText(link); toast('Link copied — send it to your rival'); } catch { toast('Room code: ' + room.code); }
+  };
+}
+if (onlineCode) { raceTab = 'online'; }
 
 // ───────────────────────── upgrades ─────────────────────────
 let upSel = 'engine';
@@ -376,6 +456,6 @@ if (/\/belt-run\//.test(location.pathname)) {
   b.after(a);
 }
 refreshTop();
-go('garage');
+if (onlineCode) go('races'); else go('garage');
 if (S.legacy && !S.legacyShown) { S.legacyShown = true; persist(); toast('Welcome back — a cash bonus from your previous Belt Run career was added'); }
 window.__belt = { get S() { return S; }, go, launch };

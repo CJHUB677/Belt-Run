@@ -7,6 +7,7 @@ import { drawCar, loadSprite, spriteMetrics, createMotion, stepMotion, preload }
 import { createScene, drawScene, layout, emitSmoke, drawSmoke } from '../render/scene.js';
 import { drawTach, drawBoost, drawProgress, drawLights } from '../render/hud.js';
 import * as Audio from '../audio/audio.js';
+import { snapshot, createRemoteCar } from '../net/online.js';
 
 const $ = id => document.getElementById(id);
 const LAUNCH_MSG = { perfect: ['PERFECT LAUNCH', 'good'], good: ['GOOD LAUNCH', 'ok'], bog: ['BOGGED — TOO FEW REVS', 'bad'], spin: ['WHEELSPIN — TOO MANY REVS', 'bad'] };
@@ -21,7 +22,10 @@ export function haptic(kind = 'light', settings) {
   } catch {}
 }
 
-export async function startRace({ player, opponent = null, distance = 'quarter', venue = 'ny', settings, seed = (Math.random() * 1e9) | 0, title = '', onFinish, onQuit }) {
+export async function startRace({ player, opponent = null, distance = 'quarter', venue = 'ny', settings, seed = (Math.random() * 1e9) | 0, title = '', onFinish, onQuit, online = null }) {
+  // online = { net, opp: { car, bc, name }, startPerf, seat }: the rival is another phone; its car is
+  // drawn from live snapshots instead of being simulated here, and the server decides the winner.
+  if (online) opponent = online.opp;
   const root = $('race'), canvas = $('race-canvas'), g = canvas.getContext('2d');
   root.hidden = false; document.body.classList.add('racing');
   $('race-title').textContent = title;
@@ -32,8 +36,14 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
   $('race-msg').className = 'race-msg'; $('race-msg').textContent = 'LOADING…';
   await preload([player.car, ...(opponent ? [opponent.car] : [])]);
 
-  const race = createRace({ player: player.bc, opponent: opponent?.bc || null, aiSkill: opponent?.ai || 3, distance, seed });
-  const P = race.cars[0], O = race.cars[1] || null;
+  const race = createRace({ player: player.bc, opponent: online ? null : opponent?.bc || null, aiSkill: opponent?.ai || 3, distance, seed });
+  const P = race.cars[0], O = online ? createRemoteCar(online.opp.bc) : race.cars[1] || null;
+  let sentFinish = false, lastSend = -1, serverResult = null;
+  if (online) {
+    online.net.on('state', m => O.push(m.s));
+    online.net.on('rivalFinished', () => { if (P.finishT == null) msg((online.opp.name || 'RIVAL') + ' FINISHED', 'bad', 1200); });
+    online.net.on('result', m => { serverResult = m; });
+  }
   window.__race = race;   // exposed for automated tests
   const scene = createScene(venue);
   const motions = [createMotion(), createMotion()];
@@ -89,7 +99,7 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
   };
   const offs = [hold(gasBtn, gas), tap(nosBtn, nosTap), tap(shiftBtn, up), tap(downBtn, down), tap($('btn-pause'), () => pause(true))];
   addEventListener('keydown', keys); addEventListener('keyup', keys);
-  const blur = () => { gas(false); nos(false); if (race.phase === 'run' || race.phase === 'countdown') pause(true); };
+  const blur = () => { gas(false); nos(false); if (!online && (race.phase === 'run' || race.phase === 'countdown')) pause(true); };
   addEventListener('blur', blur);
   const vis = () => { if (document.hidden) blur(); };
   document.addEventListener('visibilitychange', vis);
@@ -100,7 +110,8 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
     last = performance.now();
   }
   $('pause-resume').onclick = () => pause(false);
-  $('pause-quit').onclick = () => { cleanup(); onQuit?.(); };
+  $('pause-quit').onclick = () => { if (online && !sentFinish) { sentFinish = true; online.net.send({ t: 'finish', slip: {} }); } cleanup(); onQuit?.(); };
+  $('race-pause').querySelector('h2').textContent = online ? 'ONLINE RACE — KEEPS RUNNING' : 'PAUSED';
 
   function cleanup() {
     if (!alive) return; alive = false;
@@ -118,8 +129,12 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
       else if (e.type === 'launch' && e.car === 'player') { const [t, c] = LAUNCH_MSG[e.q]; msg(t, c, 1300); haptic(e.q === 'perfect' ? 'heavy' : 'medium', settings); }
       else if (e.type === 'shift' && e.car === 'player') { const [t, c] = SHIFT_MSG[e.q]; msg(t, c, 900); gearFlashUntil = performance.now() + 400; }
       else if (e.type === 'overrev' && e.car === 'player') msg('TOO FAST TO DOWNSHIFT', 'bad', 900);
+      else if (e.type === 'finish' && e.car === 'player' && online) { gas(false); nos(false); msg(O.finishT != null ? 'BEATEN' : 'FINISH!', O.finishT != null ? 'bad' : 'good', 1500); }
       else if (e.type === 'finish' && e.car === 'player') { gas(false); nos(false); msg(O && O.finishT == null ? 'WINNER!' : O ? (O.finishT < P.finishT ? 'BEATEN' : 'WINNER!') : 'FINISH', O && O.finishT != null && O.finishT < P.finishT ? 'bad' : 'good', 2500); }
-      else if (e.type === 'result') doneAt = performance.now();
+      else if (e.type === 'result') {
+        if (!online) doneAt = performance.now();
+        else if (!sentFinish) { sentFinish = true; const p = race.result.player; online.net.send({ t: 'finish', slip: { et: p.et, trap: p.trap, ft60: p.ft60, launch: p.launch?.q, perfectShifts: p.perfectShifts, shifts: p.shifts } }); if (!serverResult) msg('WAITING FOR ' + (online.opp.name || 'RIVAL').toUpperCase() + '…', 'ok', 60000); }
+      }
     }
   }
 
@@ -127,7 +142,11 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
     if (!alive) return;
     raf = requestAnimationFrame(frame);
     let dt = Math.min(0.1, (now - last) / 1000); last = now;
-    if (paused) dt = 0;
+    if (paused && !online) dt = 0;
+    if (online && now < online.startPerf) {           // both phones start the countdown together
+      dt = 0; const s = Math.ceil((online.startPerf - now) / 1000);
+      $('race-msg').textContent = 'VS ' + (online.opp.name || 'RIVAL').toUpperCase() + ' · ' + s; $('race-msg').className = 'race-msg show ok'; msgUntil = now + 200;
+    }
     acc += dt;
     while (acc >= SIM_DT) {
       if (settings.autoShift && race.phase === 'run' && P.finishT == null) {
@@ -138,12 +157,25 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
       // keep running after the result so cars roll through the finish
     }
     if (nosArmed && P.st.nosLeft <= 0) { nos(false); nosBtn.classList.add('empty'); }
+    if (online) {
+      O.update(race.t);
+      if (dt > 0 && race.t - lastSend >= 0.05) { lastSend = race.t; online.net.send({ t: 'state', s: snapshot(race, P) }); }
+      if (serverResult && race.finished && !doneAt) {
+        const me = online.seat, r = serverResult.results || [], opp = r[1 - me];
+        race.result.winner = serverResult.winner === me ? 'player' : 'ai';
+        race.result.opponent = opp ? { et: opp.et, trap: opp.trap, ft60: opp.ft60 } : { et: null };
+        race.result.margin = opp?.et && P.et ? Math.abs(opp.et - P.et) : null;
+        race.result.online = { rival: online.opp.name, winner: serverResult.winner, me };
+        msg(race.result.winner === 'player' ? 'YOU WIN!' : 'YOU LOSE', race.result.winner === 'player' ? 'good' : 'bad', 2000);
+        doneAt = performance.now();
+      }
+    }
     handleEvents();
     render(dt);
     const mode = race.phase === 'run' || race.phase === 'finished' ? 'race' : 'stage';
     Audio.frame({ mode: doneAt && now - doneAt > 2500 ? 'menu' : mode, player: P, rival: O, dt });
     if (performance.now() > msgUntil) $('race-msg').classList.remove('show');
-    if (doneAt && now - doneAt > 1600) { cleanup(); onFinish?.(race); }
+    if (doneAt && now - doneAt > 1600) { cleanup(); if (online) { online.net.on('state', null); online.net.on('result', null); online.net.on('rivalFinished', null); } onFinish?.(race); }
   }
 
   function render(dt) {

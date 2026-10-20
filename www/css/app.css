@@ -226,3 +226,35 @@ body.racing #topbar{display:none}
 .ctl.nos.empty{opacity:.4;box-shadow:none;border-color:#ffffff30}
 .ctl.nos.on{background:radial-gradient(circle at 50% 35%,#4aa8ff,#123a6b);animation:nosPulse .5s ease-in-out infinite alternate}
 @keyframes nosPulse{from{box-shadow:0 0 12px #4aa8ff}to{box-shadow:0 0 30px #9fd1ff}}
+
+/* Online lobby */
+.online{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.on-intro{font-size:13px;line-height:1.35;color:#c9ced6}
+.on-intro b{color:var(--text)}
+.online input{flex:1;min-width:0;height:38px;border-radius:9px;border:1px solid var(--line);background:#0008;color:var(--text);font:700 16px var(--cond);letter-spacing:1px;padding:0 10px;-webkit-user-select:text;user-select:text}
+.on-grid{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:8px;align-items:stretch}
+.on-grid .primary,.on-grid .btn{height:52px}
+.on-join{display:flex;gap:6px}
+.on-join input{text-transform:uppercase;text-align:center;font-size:20px;letter-spacing:4px}
+.on-join .btn{flex:none;height:52px}
+.on-code{display:flex;align-items:center;gap:8px}
+.on-code span{font:800 12px var(--cond);letter-spacing:2px;color:var(--dim)}
+.on-code b{font:900 30px/1 var(--cond);letter-spacing:6px;color:var(--accent);flex:1}
+.on-code .btn,.on-code .ghost{flex:none;height:38px}
+.on-players{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;flex:1;min-height:0}
+.on-players .x{font:900 26px var(--cond);color:var(--accent);font-style:italic}
+.on-p{position:relative;background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-height:0;font-family:var(--cond)}
+.on-p.ready{border-color:var(--go)}
+.on-p.empty{justify-content:center;opacity:.7}
+.on-p .mk{font-weight:700;font-size:11px;letter-spacing:1.5px;color:var(--accent)}
+.on-p img{width:100%;height:clamp(36px,13vh,80px);object-fit:contain}
+.on-p b{font-size:18px;font-weight:900;font-style:italic;text-transform:uppercase;line-height:1}
+.on-p span{font-size:13px;color:var(--dim);font-weight:600}
+.on-set{display:grid;grid-template-columns:1fr 1.3fr auto;gap:8px;align-items:center}
+.on-set .seg button{padding:8px 2px;font-size:12px}
+.on-set .primary{min-width:150px;height:46px}
+@media (max-height:380px){.on-p img{height:34px}.on-p b{font-size:15px}.on-code b{font-size:24px}.online .hint{display:none}}
+.online>*{flex-shrink:0}
+.on-players{flex:0 0 auto}
+.on-set .seg{grid-column:auto}
+.on-p img{height:clamp(34px,11vh,70px)}
