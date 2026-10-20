@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "BELT RUN: DRAG LEGENDS — mobile drag racing (PWA + iOS via Capacitor)",
+  "description": "BELT RUN: DRAG LEGENDS \u2014 mobile drag racing (PWA + iOS via Capacitor)",
   "scripts": {
     "serve": "python3 -m http.server 8080 -d www",
     "test": "node --test tests/*.test.mjs tests/*.test.cjs",
     "gen": "node tools/gen-cars.cjs && node tools/gen-classes.mjs && node tools/gen-sw.mjs",
     "ios:sync": "npx cap sync ios",
-    "ios:open": "npx cap open ios"
+    "ios:open": "npx cap open ios",
+    "start": "node server/static.mjs"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3"
@@ -18,5 +19,8 @@
     "@capacitor/core": "^8.5.3",
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/ios": "^8.5.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
