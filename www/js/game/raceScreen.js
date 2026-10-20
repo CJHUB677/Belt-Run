@@ -4,13 +4,13 @@ import { createRace, stepRace, setThrottle, setNitrous, shift, launchZone, shift
 import { SIM_DT, rpmOf } from '../sim/physics.js';
 import { optimalShiftRpms } from '../sim/build.js';
 import { drawCar, loadSprite, spriteMetrics, createMotion, stepMotion, preload } from '../render/sprites.js';
-import { createScene, drawScene, layout, emitSmoke, drawSmoke } from '../render/scene.js';
+import { createScene, drawScene, layout, emitSmoke, drawSmoke, addMark } from '../render/scene.js';
 import { drawTach, drawBoost, drawProgress, drawLights } from '../render/hud.js';
 import * as Audio from '../audio/audio.js';
 import { snapshot, createRemoteCar } from '../net/online.js';
 
 const $ = id => document.getElementById(id);
-const LAUNCH_MSG = { perfect: ['PERFECT LAUNCH', 'good'], good: ['GOOD LAUNCH', 'ok'], bog: ['BOGGED — TOO FEW REVS', 'bad'], spin: ['WHEELSPIN — TOO MANY REVS', 'bad'] };
+const LAUNCH_MSG = { perfect: ['PERFECT LAUNCH', 'good'], good: ['GOOD LAUNCH', 'ok'], bog: ['BOGGED — TOO FEW REVS', 'bad'], spin: ['WHEELSPIN — TOO MANY REVS', 'bad'], roll: ['GO GO GO!', 'good'] };
 const SHIFT_MSG = { perfect: ['PERFECT SHIFT', 'good'], good: ['GOOD SHIFT', 'ok'], early: ['EARLY SHIFT', 'bad'], late: ['LATE SHIFT', 'bad'] };
 
 export function haptic(kind = 'light', settings) {
@@ -22,7 +22,7 @@ export function haptic(kind = 'light', settings) {
   } catch {}
 }
 
-export async function startRace({ player, opponent = null, distance = 'quarter', venue = 'ny', settings, seed = (Math.random() * 1e9) | 0, title = '', onFinish, onQuit, online = null }) {
+export async function startRace({ player, opponent = null, distance = 'quarter', venue = 'ny', settings, seed = (Math.random() * 1e9) | 0, title = '', onFinish, onQuit, online = null, roll = 0, aiDial = 0 }) {
   // online = { net, opp: { car, bc, name }, startPerf, seat }: the rival is another phone; its car is
   // drawn from live snapshots instead of being simulated here, and the server decides the winner.
   if (online) opponent = online.opp;
@@ -36,7 +36,7 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
   $('race-msg').className = 'race-msg'; $('race-msg').textContent = 'LOADING…';
   await preload([player.car, ...(opponent ? [opponent.car] : [])]);
 
-  const race = createRace({ player: player.bc, opponent: online ? null : opponent?.bc || null, aiSkill: opponent?.ai || 3, distance, seed });
+  const race = createRace({ player: player.bc, opponent: online ? null : opponent?.bc || null, aiSkill: opponent?.ai || 3, distance, seed, roll, aiDial });
   const P = race.cars[0], O = online ? createRemoteCar(online.opp.bc) : race.cars[1] || null;
   let sentFinish = false, lastSend = -1, serverResult = null;
   if (online) {
@@ -124,7 +124,7 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
   function handleEvents() {
     for (; evIdx < race.events.length; evIdx++) {
       const e = race.events[evIdx];
-      if (e.type === 'light') { Audio.beep(false); msg(String(e.n), 'count', 850); }
+      if (e.type === 'light') { Audio.beep(false); msg(race.roll && e.n === 3 ? 'ROLLING AT 40 — FLOOR IT ON GREEN' : String(e.n), race.roll && e.n === 3 ? 'ok' : 'count', 850); }
       else if (e.type === 'go') { Audio.beep(true); }
       else if (e.type === 'launch' && e.car === 'player') { const [t, c] = LAUNCH_MSG[e.q]; msg(t, c, 1300); haptic(e.q === 'perfect' ? 'heavy' : 'medium', settings); }
       else if (e.type === 'shift' && e.car === 'player') { const [t, c] = SHIFT_MSG[e.q]; msg(t, c, 900); gearFlashUntil = performance.now() + 400; }
@@ -194,18 +194,21 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
       const fp = ppm * Lay.farScale, ow = (ms[1] ? ms[1].lengthM : 4.7) * fp;
       const ox = anchorX + (O.st.x - P.st.x) * fp - ow / 2;   // world x = front bumper
       if (ox > -ow && ox < W + ow) {
-        const info = drawCar(g, opponent.car, ox, Lay.farGround, ow, { motion: motions[1], nos: O.st.nosOn });
-        if (info && (O.st.smoke > 0.05) && dt > 0) emitSmoke(scene, info.rearX, Lay.farGround - 2, O.st.smoke * 0.6, O.st.v * fp);
+        const info = drawCar(g, opponent.car, ox, Lay.farGround, ow, { motion: motions[1], nos: O.st.nosOn, look: opponent.look });
+        if (info && (O.st.smoke > 0.05) && dt > 0) emitSmoke(scene, info.driveX, Lay.farGround - 2, O.st.smoke * (0.4 + Math.min(1, (O.st.slipV || 0) / 6)), O.st.v * fp, 0.8);
+        if (info && O.st.spinning && dt > 0) { const wx = O.st.x + (info.driveX - (ox + ow / 2)) / fp; addMark(scene, 'far', wx - O.st.v * dt, wx, 0.25 + Math.min(0.5, (O.st.slipV || 0) / 8)); }
       }
     }
     stepMotion(motions[0], P.st, dt, liveRun, P.bc.r);
     drawSmoke(g, scene, dt, P.st.v * ppm * dt);
-    const info = drawCar(g, player.car, anchorX - carW / 2, Lay.nearGround, carW, { motion: motions[0], nos: P.st.nosOn });
-    if (info && P.st.smoke > 0.05 && dt > 0) emitSmoke(scene, info.rearX, Lay.nearGround - 2, P.st.smoke, P.st.v * ppm);
+    const info = drawCar(g, player.car, anchorX - carW / 2, Lay.nearGround, carW, { motion: motions[0], nos: P.st.nosOn, look: player.look });
+    if (info && P.st.smoke > 0.05 && dt > 0) emitSmoke(scene, info.driveX, Lay.nearGround - 2, P.st.smoke * (0.5 + Math.min(1.2, (P.st.slipV || 0) / 5)), P.st.v * ppm);
+    if (info && P.st.spinning && dt > 0) { const wx = P.st.x + (info.driveX - anchorX) / ppm; addMark(scene, 'near', wx - P.st.v * dt, wx, 0.3 + Math.min(0.45, (P.st.slipV || 0) / 8)); }
+    if (P.st.spinning && P.st.slipV > 0.8 && race.phase === 'run') { g.save(); g.font = '900 13px "Barlow Condensed",sans-serif'; const tw = Math.min(110, W * 0.12), Rr = Math.min(H * 0.19, W * 0.11), tx0 = W * 0.58 - Rr * 1.15 - tw, ty0 = H - (player.bc.nosSeconds > 0 ? 80 : 58); g.fillStyle = 'rgba(255,59,48,.92)'; g.beginPath(); g.roundRect ? g.roundRect(tx0, ty0, tw, 20, 6) : g.rect(tx0, ty0, tw, 20); g.fill(); g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('WHEELSPIN', tx0 + tw / 2, ty0 + 11); g.restore(); }
     // HUD
     const rpm = rpmOf(P.st), bc = player.bc;
     let zone = null, shiftFrac = 0;
-    if (race.phase === 'countdown' || race.phase === 'staging') { zone = launchZone(bc); shiftFrac = Math.max(0, Math.min(1, (rpm - bc.idle) / Math.max(1, zone.lo - bc.idle))); }
+    if ((race.phase === 'countdown' || race.phase === 'staging') && !race.roll) { zone = launchZone(bc); shiftFrac = Math.max(0, Math.min(1, (rpm - bc.idle) / Math.max(1, zone.lo - bc.idle))); }
     else if (P.st.gear > 0 && P.st.gear < bc.ratios.length && P.finishT == null) { zone = shiftZone(bc, P.st.gear); shiftFrac = Math.max(0, Math.min(1, (rpm - (zone.lo - 1800)) / 1800)); }
     const R = Math.min(H * 0.19, W * 0.11), tx = W * 0.58;
     drawTach(g, tx, H - R - 8, R, { rpm, limiter: bc.limiter, zone, zonePerfect: zone && rpm >= zone.lo && rpm <= zone.hi, gear: P.st.gear, speed: toUnits(P.st.v), units, shiftFrac, gearFlash: performance.now() < gearFlashUntil });

@@ -1,5 +1,8 @@
 // BELT RUN: DRAG LEGENDS — app shell: garage, race select, upgrades, tuning, dealer, settings.
-import { CARS, CAR_BY_ID, VENUES, CLASS_NAMES, classOf, stockET, ladder, hondaCup, quickReward, reward, carLocked, upgradePrice } from './data/career.js';
+import { CARS, CAR_BY_ID, VENUES, CLASS_NAMES, classOf, stockET, ladder, hondaCup, quickReward, reward, carLocked, upgradePrice, STORY, MODE_INFO, knockoutRounds, knockoutPrize, dailyChallenge, bracketWinner } from './data/career.js';
+import { CREW, HONDA_STORY } from './data/story.js';
+import { PAINTS, WHEELS, STANCES, GLOWS, FLAMES } from './render/sprites.js';
+import { cleanLook, buyLook, LOOK_PRICES } from './game/state.js';
 import { load, save, resetSave, buyCar, sellCar, sellValue, buyUpgrade, nextUpgradePrice, setTune, eventAvailable, applyResult } from './game/state.js';
 import { buildCar, defaultTune, tuneLimits, dynoCurve, peakPower, UPGRADE_KEYS, UPGRADE_INFO, MAX_LEVEL, HP_PER_KW, gearSpeeds, nitrousSpec } from './sim/build.js';
 import { simulateRun, DIST_LABEL, MS_TO_MPH } from './sim/race.js';
@@ -42,14 +45,14 @@ const closeModal = () => { $('modal').hidden = true; };
 $('modal').addEventListener('pointerdown', e => { if (e.target === $('modal') && !$('modal').dataset.sticky) closeModal(); });
 
 // ───────────────────────── navigation ─────────────────────────
-const TITLES = { garage: '', races: 'Race', upgrades: 'Upgrades', tune: 'Tuning', dealer: 'Dealer', mycars: 'My Cars', settings: 'Settings' };
+const TITLES = { garage: '', races: 'Race', upgrades: 'Upgrades', tune: 'Tuning', dealer: 'Dealer', mycars: 'My Cars', settings: 'Settings', style: 'Paint & Style' };
 let screen = 'garage';
 function go(name) {
   screen = name;
   for (const k of Object.keys(TITLES)) $('scr-' + k).hidden = k !== name;
   $('nav-back').hidden = name === 'garage';
-  $('screen-title').textContent = TITLES[name] && name !== 'garage' ? TITLES[name] + (['upgrades', 'tune'].includes(name) ? ' · ' + CAR_BY_ID[S.current].name : '') : '';
-  ({ garage: renderGarage, races: renderRaces, upgrades: renderUpgrades, tune: renderTune, dealer: renderDealer, mycars: renderMyCars, settings: renderSettings })[name]();
+  $('screen-title').textContent = TITLES[name] && name !== 'garage' ? TITLES[name] + (['upgrades', 'tune', 'style'].includes(name) ? ' · ' + CAR_BY_ID[S.current].name : '') : '';
+  ({ garage: renderGarage, races: renderRaces, upgrades: renderUpgrades, tune: renderTune, dealer: renderDealer, mycars: renderMyCars, settings: renderSettings, style: renderStyle })[name]();
   Audio.uiClick();
 }
 $('nav-back').onclick = () => go('garage');
@@ -80,7 +83,7 @@ function paintGarageCar() {
   const beam = g.createLinearGradient(0, 0, 0, floorY); beam.addColorStop(0, 'rgba(255,220,160,.10)'); beam.addColorStop(1, 'rgba(255,220,160,0)');
   g.fillStyle = beam; g.beginPath(); g.moveTo(W * 0.44, 0); g.lineTo(W * 0.56, 0); g.lineTo(W * 0.82, floorY); g.lineTo(W * 0.18, floorY); g.fill();
   const width = Math.min(W * 0.62, (H * 0.78) * 2.9);
-  drawCar(g, car, W / 2, floorY, width, {});
+  drawCar(g, car, W / 2, floorY, width, { look: S.owned[S.current]?.look });
 }
 onSpriteLoad(id => { if (screen === 'garage' && id === S.current) paintGarageCar(); });
 new ResizeObserver(() => { if (screen === 'garage') paintGarageCar(); }).observe($('garage-canvas'));
@@ -108,18 +111,18 @@ function renderRaces() {
     let events, head = '';
     if (raceTab === 'honda') {
       events = hondaCup();
-      head = `<div class="hint">Jamaica · Harbour Road. <b>Honda only.</b> ${car.make === 'Honda' ? 'Your ' + esc(car.name) + ' is eligible.' : 'Pick a Honda in My Cars (your Civic Si is a good start).'} </div>`;
+      head = `<div class="hint"><button class="btn" id="story-btn" style="display:inline-flex;height:30px;margin-right:6px">📖 STORY</button>Jamaica · Harbour Road. <b>Honda only.</b> ${car.make === 'Honda' ? 'Your ' + esc(car.name) + ' is eligible.' : 'Pick a Honda in My Cars (your Civic Si is a good start).'} </div>`;
     } else {
       if (careerClass == null || careerClass < myCls) careerClass = myCls;
-      head = `<div class="chips">${Array.from({ length: 10 }, (_, i) => i + 1).map(c => { const done = ladder(c).filter(e => S.done[e.id]).length; return `<button data-cls="${c}" class="${c === careerClass ? 'on' : ''} ${c < myCls ? 'lock' : ''}">C${c} ${CLASS_NAMES[c]} <small>${done}/7</small></button>`; }).join('')}</div>
-      <div class="hint">${/^your /i.test(car.name) ? esc(car.name) : 'Your ' + esc(car.name)} runs in <b>Class ${myCls}</b>. You can enter its class or any higher class. Win each event to unlock the next; beat the boss for a ${money(reward(careerClass) * 3)} prize.</div>`;
+      head = `<div class="chips">${Array.from({ length: 10 }, (_, i) => i + 1).map(c => { const done = ladder(c).filter(e => S.done[e.id]).length; return `<button data-cls="${c}" class="${c === careerClass ? 'on' : ''} ${c < myCls ? 'lock' : ''}">C${c} ${CLASS_NAMES[c]} <small>${done}/13</small></button>`; }).join('')}</div>
+      <div class="chapter"><div><small>CHAPTER ${careerClass} · ${esc(STORY[careerClass].city)}</small><b>${esc(STORY[careerClass].title)}</b></div><button class="btn" id="story-btn">📖 STORY</button><span class="hint">${/^your /i.test(car.name) ? esc(car.name) : 'Your ' + esc(car.name)} runs in <b>Class ${myCls}</b> — enter its class or higher. Boss prize ${money(reward(careerClass) * 3)}.</span></div>`;
       events = ladder(careerClass);
     }
     body.innerHTML = head + `<div class="cards">${events.map(ev => {
       const oc = CAR_BY_ID[ev.opp.car], av = eventAvailable(S, ev), done = S.done[ev.id];
       return `<button class="ev ${ev.boss ? 'boss' : ''} ${done ? 'done' : ''} ${av.ok ? '' : 'locked'}" data-ev="${ev.id}">
         ${done ? '<span class="badge go">✓ WON</span>' : ev.boss ? '<span class="badge gold">BOSS</span>' : ''}
-        <span class="mk">${VENUES[ev.venue].name} · ${DIST_LABEL[ev.distance]}</span><span class="nm">${esc(ev.name)}</span>
+        <span class="mk">${VENUES[ev.venue].name} · ${DIST_LABEL[ev.distance]}${ev.roll ? ' · ROLL 40' : ''}</span><span class="nm">${esc(ev.name)}</span>${ev.rival && !ev.boss ? '<span class="badge rival">RIVAL</span>' : ''}
         <img loading="lazy" src="${thumb(oc)}" alt="">
         <span class="vs">VS ${esc(oc.year + ' ' + oc.make + ' ' + oc.name)}<br>${'★'.repeat(ev.opp.ai)}${'☆'.repeat(5 - ev.opp.ai)} driver · stage ${Math.round(avgLevel(ev.opp.lv))}</span>
         <span class="pr">${done ? money(Math.round(ev.reward * 0.25 / 25) * 25) + ' <small>replay</small>' : money(ev.reward)}${av.ok ? '' : `<small>🔒 ${esc(av.reason)}</small>`}</span>
@@ -128,11 +131,14 @@ function renderRaces() {
     body.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => {
       const ev = events.find(e => e.id === b.dataset.ev), av = eventAvailable(S, ev);
       if (!av.ok) { toast(av.reason); return; }
-      preRace({ kind: 'event', ev, venue: ev.venue, distance: ev.distance, opp: ev.opp, title: ev.name });
+      const cfg = { kind: 'event', ev, venue: ev.venue, distance: ev.distance, opp: ev.opp, title: ev.name, roll: ev.roll || 0 };
+      storyBefore(ev, () => preRace(cfg));
     });
+    const sb = $('story-btn'); if (sb) sb.onclick = () => raceTab === 'honda' ? storyCard('Harbour Cup · Kingston', HONDA_STORY.intro) : storyCard(`Chapter ${careerClass} · ${STORY[careerClass].title}`, STORY[careerClass].intro, null, STORY[careerClass].city);
     const on = body.querySelector('.ev:not(.done):not(.locked)'); on?.scrollIntoView({ inline: 'center', block: 'nearest' });
   } else if (raceTab === 'quick') renderQuick(body, car, myCls);
   else if (raceTab === 'online') renderOnline(body, car);
+  else if (raceTab === 'modes') renderModes(body, car, myCls);
   else renderTest(body, car);
 }
 
@@ -172,13 +178,19 @@ function renderTest(body, car) {
 }
 
 function oppBuild(opp, env) { const c = CAR_BY_ID[opp.car]; return buildCar(c, opp.lv, defaultTune(c, opp.lv), env); }
+function playerFor(cfg, env) {
+  if (cfg.borrow) { const car = CAR_BY_ID[cfg.borrow]; return { car, bc: buildCar(car, {}, defaultTune(car), env), look: null }; }
+  return { car: CAR_BY_ID[S.current], bc: carBuild(S.current, env), look: S.owned[S.current].look };
+}
 function preRace(cfg) {
-  const car = CAR_BY_ID[S.current], oc = CAR_BY_ID[cfg.opp.car], env = VENUES[cfg.venue];
-  const me = carBuild(S.current, env), them = oppBuild(cfg.opp, env);
+  const env = VENUES[cfg.venue], pl = playerFor(cfg, env), car = pl.car, me = pl.bc;
+  if (!cfg.opp) return soloPreRace(cfg, pl);
+  const oc = CAR_BY_ID[cfg.opp.car], them = oppBuild(cfg.opp, env);
   modal(`<h2>${esc(cfg.title)}</h2><p>${env.name} · ${esc(env.track)} · ${DIST_LABEL[cfg.distance]} · ${env.temp}°F</p>
     <div class="versus"><div class="side"><img src="${thumb(car)}" alt=""><b>${esc(car.name)}</b><span>${hpOf(me)} HP · ${Math.round(me.mass - 80)} KG · ${car.drive}</span></div><div class="x">VS</div>
     <div class="side"><img src="${thumb(oc)}" alt=""><b>${esc(oc.name)}</b><span>${hpOf(them)} HP · ${Math.round(them.mass - 80)} KG · ${oc.drive}</span></div></div>
-    <p><b>How to race:</b> hold GAS during the countdown and keep the needle in the green launch zone. The clutch drops on green. Tap SHIFT when the needle reaches the green arc / the shift lights fill. ${me.nosSeconds ? 'Hold N₂O after 1st gear.' : ''}${me.hasLaunchControl ? ' Your car has launch control: flat-foot it.' : ' No launch control: feather the pedal.'}</p>
+    ${cfg.note ? `<p class="note">${cfg.note}</p>` : ''}
+    <p>${cfg.roll ? '<b>Roll race:</b> both cars cruise at 40 mph. Floor it on green and shift on the lights.' : '<b>How to race:</b> hold GAS during the countdown'} and keep the needle in the green launch zone. The clutch drops on green. Tap SHIFT when the needle reaches the green arc / the shift lights fill. ${me.nosSeconds ? 'Tap N₂O to fire it.' : ''}${cfg.roll ? '' : me.hasLaunchControl ? ' Your car has launch control: flat-foot it.' : ' No launch control: feather the pedal.'}</p>
     <div class="row-btns"><button class="ghost" id="pr-cancel">BACK</button><button class="primary" id="pr-go">STAGE ▸</button></div>`, c => {
     c.querySelector('#pr-cancel').onclick = closeModal;
     c.querySelector('#pr-go').onclick = () => { closeModal(); launch(cfg); };
@@ -187,20 +199,21 @@ function preRace(cfg) {
 
 async function launch(cfg) {
   Audio.unlock();
-  const env = VENUES[cfg.venue], car = CAR_BY_ID[S.current];
-  const player = { car, bc: carBuild(S.current, env) };
+  const env = VENUES[cfg.venue];
+  const player = playerFor(cfg, env);
   const opponent = cfg.opp ? { car: CAR_BY_ID[cfg.opp.car], bc: oppBuild(cfg.opp, env), ai: cfg.opp.ai } : null;
-  await startRace({ player, opponent, distance: cfg.distance, venue: cfg.venue, settings: S.settings, title: cfg.title,
+  await startRace({ player, opponent, distance: cfg.distance, venue: cfg.venue, settings: S.settings, title: cfg.title, roll: cfg.roll || 0, aiDial: cfg.aiDial || 0,
     onFinish: race => results(cfg, race), onQuit: () => { toast('Race abandoned — no result'); go(screen); } });
 }
 
 function results(cfg, race) {
-  const r = race.result, carId = S.current;
+  const r = race.result, carId = cfg.borrow || S.current;
+  if (cfg.decide) cfg.decide(r);
   const out = applyResult(S, { kind: cfg.kind, ev: cfg.ev || null, cls: cfg.cls || classOf(CAR_BY_ID[carId]), result: r, carId, distance: cfg.distance, bet: cfg.bet || 0, purse: cfg.purse ?? null });
   persist();
   const p = r.player, o = r.opponent, won = out.won;
   const title = cfg.kind === 'test' ? 'TIME SLIP' : cfg.kind === 'online' && r.online ? (won ? 'YOU BEAT ' + esc(String(r.online.rival || 'YOUR RIVAL')).toUpperCase() : esc(String(r.online.rival || 'YOUR RIVAL')).toUpperCase() + ' WINS') : won ? (cfg.ev?.boss ? 'BOSS BEATEN!' : 'YOU WIN') : 'YOU LOSE';
-  const launchQ = { perfect: 'PERFECT', good: 'GOOD', bog: 'BOGGED', spin: 'SPUN' }[p.launch?.q] || '—';
+  const launchQ = { perfect: 'PERFECT', good: 'GOOD', bog: 'BOGGED', spin: 'SPUN', roll: 'ROLLING' }[p.launch?.q] || '—';
   const unlocks = CARS.filter(c => c.wins && S.wins === c.wins && won && cfg.kind !== 'test');
   const rivalLbl = cfg.kind === 'online' && r.online ? esc(String(r.online.rival || 'RIVAL')).toUpperCase() + ' ET' : 'RIVAL ET';
   modal(`<h2 class="${cfg.kind === 'test' ? '' : won ? 'win' : 'lose'}">${title}</h2>
@@ -211,13 +224,19 @@ function results(cfg, race) {
       ${o ? `<div class="vs">${rivalLbl}<b>${o.et ? fmt3(o.et) : 'DNF'}</b></div>` : `<div>N₂O USED<b>${p.nosUsed ? p.nosUsed.toFixed(1) + '<small> s</small>' : '—'}</b></div>`}
     </div>
     ${cfg.kind !== 'test' ? `<div class="payout ${out.payout < 0 ? 'neg' : ''}">${out.payout >= 0 ? '+' : ''}${money(out.payout)}${out.firstWin ? ' <small style="font-size:14px;color:var(--dim)">EVENT PRIZE</small>' : ''}</div>` : ''}
+    ${r.modeNote ? `<p class="note">${r.modeNote}</p>` : ''}
     ${unlocks.map(c => `<p>🔓 <b>${esc(c.name)}</b> is now available at the Dealer.</p>`).join('')}
-    <div class="row-btns" style="margin-top:10px"><button class="ghost" id="rs-garage">GARAGE</button><button class="ghost" id="rs-up">UPGRADE</button><button class="primary" id="rs-again">${cfg.kind === 'online' ? 'BACK TO LOBBY ▸' : won && cfg.kind === 'event' ? 'NEXT ▸' : 'RACE AGAIN ▸'}</button></div>`, c => {
+    <div class="row-btns" style="margin-top:10px"><button class="ghost" id="rs-garage">GARAGE</button><button class="ghost" id="rs-up">UPGRADE</button><button class="primary" id="rs-again">${cfg.kind === 'online' ? 'BACK TO LOBBY ▸' : (won && cfg.kind === 'event') || cfg.mode ? 'NEXT ▸' : 'RACE AGAIN ▸'}</button></div>`, c => {
     c.querySelector('#rs-garage').onclick = () => { closeModal(); go('garage'); };
     c.querySelector('#rs-up').onclick = () => { closeModal(); go('upgrades'); };
     c.querySelector('#rs-again').onclick = () => {
       closeModal();
-      if (won && cfg.kind === 'event') { go('races'); return; }
+      if (won && cfg.kind === 'event') {
+        const ev = cfg.ev, outro = ev.boss && out.firstWin ? (ev.honda ? HONDA_STORY.outro : STORY[ev.cls]?.outro) : null;
+        if (outro) { storyCard(ev.honda ? 'Harbour Cup complete' : `Chapter ${ev.cls} complete`, outro, () => go('races')); return; }
+        go('races'); return;
+      }
+      if (cfg.mode) { cfg.after?.(won); raceTab = 'modes'; go('races'); return; }
       if (cfg.kind === 'online') { raceTab = 'online'; go('races'); return; }
       if (cfg.kind === 'quick' && cfg.bet > S.cash) cfg.bet = 0;
       launch(cfg);
@@ -230,7 +249,7 @@ function results(cfg, race) {
 // ───────────────────────── online (head-to-head with another phone) ─────────────────────────
 const net = createOnline();
 let onlineCode = new URLSearchParams(location.search).get('room') || '';
-const carPayload = () => { const o = S.owned[S.current]; return { id: S.current, lv: o.lv, tune: o.tune, hp: hpOf(carBuild()) }; };
+const carPayload = () => { const o = S.owned[S.current]; return { id: S.current, lv: o.lv, tune: o.tune, hp: hpOf(carBuild()), look: cleanLook(o.look) }; };
 const myName = () => (S.settings.name || '').trim() || 'Racer';
 async function ensureOnline() { if (net.status === 'online') { net.send({ t: 'hello', name: myName(), car: carPayload() }); return true; } return net.connect({ name: myName(), car: carPayload() }); }
 net.onChange(() => { if (screen === 'races' && raceTab === 'online' && !document.body.classList.contains('racing')) renderRaces(); });
@@ -242,8 +261,8 @@ net.on('start', m => {
   const oppBc = buildCar(oc, opp.car?.lv || {}, opp.car?.tune || {}, env);
   const cfg = { kind: 'online', venue: m.venue, distance: m.distance, opp: null, title: 'Online · vs ' + opp.name, purse: Math.round(quickReward(classOf(CAR_BY_ID[S.current])) * 1.2 / 25) * 25 };
   Audio.unlock();
-  startRace({ player: { car: CAR_BY_ID[S.current], bc: carBuild(S.current, env) }, distance: m.distance, venue: m.venue, settings: S.settings, title: cfg.title,
-    online: { net, seat: m.seat, startPerf: net.perfAt(m.at), opp: { car: oc, bc: oppBc, name: opp.name } },
+  startRace({ player: { car: CAR_BY_ID[S.current], bc: carBuild(S.current, env), look: S.owned[S.current].look }, distance: m.distance, venue: m.venue, settings: S.settings, title: cfg.title,
+    online: { net, seat: m.seat, startPerf: net.perfAt(m.at), opp: { car: oc, bc: oppBc, name: opp.name, look: cleanLook(opp.car?.look) } },
     onFinish: race => results(cfg, race), onQuit: () => { toast('You left the race — counted as a loss for this run'); raceTab = 'online'; go('races'); } });
 });
 
@@ -447,6 +466,128 @@ async function downloadOffline() {
   } catch (e) { status.textContent = 'Download interrupted — try again on Wi-Fi.'; }
 }
 if ('serviceWorker' in navigator && location.protocol !== 'file:' && !window.Capacitor) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+
+// ───────────────────────── story cards ─────────────────────────
+function storyCard(title, lines, done, sub = '') {
+  const who = n => CREW[n] || { name: n, role: 'Rival', color: '#ff5a5f' };
+  modal(`<div class="story"><small>${esc(sub || 'STORY')}</small><h2>${esc(title)}</h2>
+    ${lines.map(([n, t]) => { const w = who(n); return `<div class="line"><span class="spk" style="color:${w.color}">${esc(w.name)}${w.role ? `<i>${esc(w.role)}</i>` : ''}</span><p>${esc(t)}</p></div>`; }).join('')}
+    <div class="row-btns"><button class="primary" id="st-next">CONTINUE ▸</button></div></div>`, c => {
+    c.querySelector('#st-next').onclick = () => { closeModal(); done?.(); };
+  });
+}
+// Story before an event: chapter intro on first visit, rival trash talk before named races.
+function storyBefore(ev, then) {
+  const parts = [];
+  const introKey = ev.honda ? 'honda-intro' : `c${ev.cls}-intro`;
+  S.seen ||= {};
+  if (!S.seen[introKey]) parts.push(ev.honda ? ['Harbour Cup · Kingston', HONDA_STORY.intro, 'JAMAICA'] : [`Chapter ${ev.cls} · ${STORY[ev.cls].title}`, STORY[ev.cls].intro, STORY[ev.cls].city]);
+  if (!S.done[ev.id]) {
+    if (ev.boss) parts.push([ev.name, ev.honda ? HONDA_STORY.boss : STORY[ev.cls].boss.intro, 'BOSS RACE']);
+    else if (ev.rival) { const rv = STORY[ev.cls].rivals.find(r => r.name === ev.rival); if (rv) parts.push([ev.name, rv.lines, 'RIVAL RACE']); }
+  }
+  S.seen[introKey] = true; persist();
+  const step = i => i >= parts.length ? then() : storyCard(parts[i][0], parts[i][1], () => step(i + 1), parts[i][2]);
+  step(0);
+}
+
+// ───────────────────────── modes ─────────────────────────
+function soloPreRace(cfg, pl) {
+  const env = VENUES[cfg.venue];
+  modal(`<h2>${esc(cfg.title)}</h2><p>${env.name} · ${esc(env.track)} · ${DIST_LABEL[cfg.distance]} · ${env.temp}°F</p>
+    <div class="versus" style="grid-template-columns:1fr"><div class="side"><img src="${thumb(pl.car)}" alt=""><b>${esc(pl.car.year + ' ' + pl.car.make + ' ' + pl.car.name)}</b><span>${hpOf(pl.bc)} HP · ${Math.round(pl.bc.mass - 80)} KG · ${pl.car.drive}${cfg.borrow ? ' · stock, borrowed' : ''}</span></div></div>
+    ${cfg.note ? `<p class="note">${cfg.note}</p>` : ''}
+    <div class="row-btns"><button class="ghost" id="pr-cancel">BACK</button><button class="primary" id="pr-go">STAGE ▸</button></div>`, c => {
+    c.querySelector('#pr-cancel').onclick = closeModal;
+    c.querySelector('#pr-go').onclick = () => { closeModal(); launch(cfg); };
+  });
+}
+const avgLvRound = () => Math.round(avgLevel(S.owned[S.current].lv));
+const lvAll = n => Object.fromEntries(UPGRADE_KEYS.map(k => [k, k === 'nitrous' ? Math.max(0, n - 1) : n]));
+function classRival(myCls, seed) { const pool = CARS.filter(c => !c.ownerGift && c.id !== S.current && Math.abs(classOf(c) - myCls) <= (myCls >= 9 ? 1 : 0)); const r = (Math.sin(seed) + 1) / 2; return (pool.length ? pool : CARS)[Math.floor(r * pool.length) % Math.max(1, pool.length)]?.id || 'f82'; }
+const BRACKET = { dial: null, car: null };
+
+function renderModes(body, car, myCls) {
+  const ko = S.ko && S.ko.car === S.current ? S.ko : null;
+  const d = dailyChallenge(), dc = CAR_BY_ID[d.car], ds = S.daily?.id === d.id ? S.daily : { id: d.id, best: null, claimed: false };
+  const myBc = carBuild();
+  if (BRACKET.car !== S.current || BRACKET.dial == null) { BRACKET.car = S.current; BRACKET.dial = Math.ceil((simulateRun(myBc, { distance: 'quarter', nitrous: true }).result.player.et + 0.02) * 20) / 20; }
+  const koRounds = ko ? knockoutRounds(ko.cls, ko.seed) : null;
+  body.innerHTML = `<div class="cards modes">
+    <div class="ev mode"><span class="mk">${ko ? 'ROUND ' + (ko.round + 1) + ' OF 3' : 'CLASS ' + myCls + ' · 3 ROUNDS'}</span><span class="nm">${MODE_INFO.knockout.name}</span><span class="sp">${MODE_INFO.knockout.short}</span>
+      ${ko ? `<span class="sp">Next: <b>${esc(koRounds[ko.round].name)}</b> vs ${esc(CAR_BY_ID[koRounds[ko.round].opp.car].name)} · ${VENUES[koRounds[ko.round].venue].name}</span>` : ''}
+      <span class="pr">${money(knockoutPrize(myCls))}<small>win all 3</small></span><button class="primary" id="m-ko">${ko ? 'NEXT ROUND ▸' : 'ENTER CUP ▸'}</button></div>
+    <div class="ev mode"><span class="mk">1/4 MILE · INDEX</span><span class="nm">${MODE_INFO.bracket.name}</span><span class="sp">${MODE_INFO.bracket.short}</span>
+      <div class="dial"><button class="btn" id="m-dial-dn">−</button><b>${BRACKET.dial.toFixed(2)}<small>DIAL-IN</small></b><button class="btn" id="m-dial-up">+</button></div>
+      <span class="pr">${money(Math.round(quickReward(myCls) * 1.3 / 25) * 25)}</span><button class="primary" id="m-br">RACE ▸</button></div>
+    <div class="ev mode"><span class="mk">40 MPH ROLL · 1/2 MILE</span><span class="nm">${MODE_INFO.roll.name}</span><span class="sp">${MODE_INFO.roll.short}</span>
+      <span class="pr">${money(Math.round(quickReward(myCls) * 1.2 / 25) * 25)}</span><button class="primary" id="m-roll">RACE ▸</button></div>
+    <div class="ev mode daily"><span class="mk">TODAY · ${VENUES[d.venue].name} · ${DIST_LABEL[d.distance]}</span><span class="nm">${MODE_INFO.daily.name}</span>
+      <img loading="lazy" src="${thumb(dc)}" alt=""><span class="sp">Drive a stock <b>${esc(dc.year + ' ' + dc.make + ' ' + dc.name)}</b>. Beat <b>${d.target.toFixed(3)} s</b>.${ds.best ? ` Your best today: <b>${ds.best.toFixed(3)}</b>` : ''}</span>
+      <span class="pr">${ds.claimed ? '✓ CLAIMED' : money(d.reward)}</span><button class="primary" id="m-daily">TRY IT ▸</button></div>
+  </div>`;
+  $('m-ko').onclick = () => {
+    if (!S.ko || S.ko.car !== S.current) { S.ko = { car: S.current, cls: myCls, seed: (Math.random() * 1e9) | 0, round: 0 }; persist(); }
+    const k = S.ko, rd = knockoutRounds(k.cls, k.seed)[k.round], last = k.round === 2;
+    preRace({ kind: 'mode', mode: 'knockout', venue: rd.venue, distance: rd.distance, opp: rd.opp, title: `${MODE_INFO.knockout.name} · ${rd.name}`, purse: last ? knockoutPrize(k.cls) : 0, cls: k.cls,
+      note: last ? `Final! Win for ${money(knockoutPrize(k.cls))}.` : 'Win to go through. Lose and the cup is over.',
+      after: won => { if (!S.ko) return; if (won && S.ko.round < 2) { S.ko.round++; toast(`Through to the ${knockoutRounds(S.ko.cls, S.ko.seed)[S.ko.round].name}!`); } else { if (won) toast('Knockout Cup champion!'); else toast('Knocked out — enter again any time'); S.ko = null; } persist(); } });
+  };
+  $('m-dial-dn').onclick = () => { BRACKET.dial = Math.max(4, +(BRACKET.dial - 0.05).toFixed(2)); renderRaces(); };
+  $('m-dial-up').onclick = () => { BRACKET.dial = +(BRACKET.dial + 0.05).toFixed(2); renderRaces(); };
+  $('m-br').onclick = () => {
+    const oppId = classRival(myCls, Date.now() / 1000), lv = lvAll(avgLvRound()), oc = CAR_BY_ID[oppId];
+    const oDial = Math.ceil((simulateRun(buildCar(oc, lv, defaultTune(oc, lv)), { distance: 'quarter', nitrous: true }).result.player.et + 0.08) * 20) / 20;
+    const myDial = BRACKET.dial;
+    preRace({ kind: 'mode', mode: 'bracket', venue: 'ga', distance: 'quarter', opp: { car: oppId, lv, ai: 3 }, title: 'Bracket Racing', purse: Math.round(quickReward(myCls) * 1.3 / 25) * 25, cls: myCls, aiDial: oDial,
+      note: `Your dial-in <b>${myDial.toFixed(2)}</b> · rival dial-in <b>${oDial.toFixed(2)}</b>. Run as close to your dial as you can — quicker than it is a breakout and loses. Ease off the gas near the finish if you're running too quick.`,
+      decide: r => { const p = r.player.et, o = r.opponent?.et; r.winner = bracketWinner(p, myDial, o, oDial); r.modeNote = `Bracket: you ${p ? (p - myDial >= 0 ? '+' : '') + (p - myDial).toFixed(3) : 'DNF'} off your ${myDial.toFixed(2)} dial${p != null && p < myDial ? ' (BREAKOUT)' : ''} · rival ${o ? (o - oDial >= 0 ? '+' : '') + (o - oDial).toFixed(3) : 'DNF'} off ${oDial.toFixed(2)}${o != null && o < oDial ? ' (BREAKOUT)' : ''}.`; } });
+  };
+  $('m-roll').onclick = () => {
+    const oppId = classRival(myCls, Date.now() / 997), venues = ['tx', 'la', 'dxb', 'det', 'tk'];
+    preRace({ kind: 'mode', mode: 'roll', venue: venues[(Math.random() * venues.length) | 0], distance: 'half', roll: 17.88, opp: { car: oppId, lv: lvAll(avgLvRound()), ai: 3 }, title: 'Highway Roll', purse: Math.round(quickReward(myCls) * 1.2 / 25) * 25, cls: myCls });
+  };
+  $('m-daily').onclick = () => {
+    preRace({ kind: 'mode', mode: 'daily', borrow: d.car, venue: d.venue, distance: d.distance, opp: null, title: 'Daily Challenge', purse: ds.claimed ? 0 : d.reward, cls: classOf(dc),
+      note: `Beat <b>${d.target.toFixed(3)} s</b> in a stock ${esc(dc.name)}. ${ds.claimed ? 'Already claimed today — run it for a better time.' : 'First success today pays ' + money(d.reward) + '.'}`,
+      decide: r => { const et = r.player.et; const won = et != null && et <= d.target; r.winner = won ? 'player' : 'ai'; r.modeNote = `Target ${d.target.toFixed(3)} s · you ran ${fmt3(et)}${won ? ' — challenge beaten!' : ''}`;
+        const cur = S.daily?.id === d.id ? S.daily : { id: d.id, best: null, claimed: false }; if (et && (!cur.best || et < cur.best)) cur.best = et; if (won) cur.claimed = true; S.daily = cur; } });
+  };
+}
+
+// ───────────────────────── paint & style shop ─────────────────────────
+let styleSel = 'paint';
+const STYLE_SETS = { paint: ['Paint', PAINTS], wheels: ['Wheels', WHEELS], stance: ['Stance', STANCES], glow: ['Underglow', GLOWS], flame: ['Nitrous flame', FLAMES] };
+const SWATCH = { paint: { factory: 'conic-gradient(#888,#444,#888)', black: '#0b0b0d', white: '#f2f2f0', silver: '#b8bec6' }, wheels: { factory: 'conic-gradient(#999,#555,#999)', black: '#111', chrome: 'linear-gradient(135deg,#fff,#9aa,#fff)' }, flame: { blue: '#4aa8ff', purple: '#b04dff', green: '#3dff7a', red: '#ff4d2d' } };
+function swatch(key, id, opt) {
+  if (SWATCH[key]?.[id]) return SWATCH[key][id];
+  if (key === 'glow') return opt ? opt : 'repeating-linear-gradient(45deg,#222 0 4px,#333 4px 8px)';
+  if (opt?.hue != null) return `hsl(${opt.hue} ${Math.round(opt.sat * 100)}% 48%)`;
+  return '#333';
+}
+function paintStylePreview() {
+  const cv = $('style-canvas'); if (!cv) return; const r = cv.getBoundingClientRect(); if (!r.width) return;
+  const dpr = Math.min(devicePixelRatio || 1, 2.5); cv.width = r.width * dpr; cv.height = r.height * dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = r.width, H = r.height, floorY = H * 0.86;
+  const sp = g.createRadialGradient(W / 2, floorY, 10, W / 2, floorY, W * 0.5); sp.addColorStop(0, 'rgba(255,190,90,.2)'); sp.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = sp; g.save(); g.translate(W / 2, floorY); g.scale(1, 0.18); g.beginPath(); g.arc(0, 0, W * 0.5, 0, 7); g.fill(); g.restore();
+  drawCar(g, CAR_BY_ID[S.current], W / 2, floorY, Math.min(W * 0.9, H * 2.6), { look: S.owned[S.current].look, nos: S.owned[S.current].lv.nitrous > 0 && styleSel === 'flame' });
+}
+function renderStyle() {
+  const o = S.owned[S.current]; o.look = cleanLook(o.look);
+  const [label, set] = STYLE_SETS[styleSel];
+  const scr = $('scr-style');
+  scr.innerHTML = `<div class="style-wrap"><div class="style-prev"><canvas id="style-canvas" aria-label="Car preview"></canvas></div>
+    <div class="style-side"><div class="tabs">${Object.entries(STYLE_SETS).map(([k, [l]]) => `<button data-ss="${k}" class="${k === styleSel ? 'on' : ''}">${l.toUpperCase()}</button>`).join('')}</div>
+    <div class="swatches">${Object.entries(set).map(([id, opt]) => { const cur = o.look[styleSel] === id, free = id === Object.keys(set)[0] || (styleSel === 'flame' && id === 'blue'); return `<button class="sw ${cur ? 'on' : ''}" data-sv="${id}"><i style="background:${swatch(styleSel, id, opt)}"></i><b>${esc(opt?.name || (styleSel === 'glow' ? (id === 'off' ? 'Off' : id[0].toUpperCase() + id.slice(1)) : id[0].toUpperCase() + id.slice(1)))}</b><small>${cur ? 'ON YOUR CAR' : free ? 'FREE' : money(LOOK_PRICES[styleSel])}</small></button>`; }).join('')}</div>
+    <p class="hint">${styleSel === 'paint' ? 'Paint changes the body colour. Black, white and grey cars take colours as a tint.' : styleSel === 'stance' ? 'Lowers the body over the wheels. Looks only — handling is unchanged.' : styleSel === 'flame' ? 'Colour of the exhaust flame when nitrous fires.' : styleSel === 'glow' ? 'Neon light under the car.' : 'Wheel finish. Tires stay black.'} Your rival sees your style in online races.</p></div></div>`;
+  scr.querySelectorAll('[data-ss]').forEach(b => b.onclick = () => { styleSel = b.dataset.ss; renderStyle(); });
+  scr.querySelectorAll('[data-sv]').forEach(b => b.onclick = () => { const r = buyLook(S, styleSel, b.dataset.sv); if (!r.ok) { toast(r.reason === 'cash' ? 'Not enough cash' : 'Not available'); return; } if (r.price) toast(`${label} applied · −${money(r.price)}`); persist(); renderStyle(); haptic('light', S.settings); });
+  requestAnimationFrame(paintStylePreview);
+}
+onSpriteLoad(id => { if (screen === 'style' && id === S.current) paintStylePreview(); });
 
 // ───────────────────────── boot ─────────────────────────
 // Inside Yard Games (served at /belt-run/), the brand doubles as a way back to the other games.

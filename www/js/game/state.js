@@ -1,5 +1,6 @@
 // Save game + economy. One localStorage key; every write is guarded (private mode, quota).
 import { CARS, CAR_BY_ID, STARTING_CASH, STARTER_CARS, upgradePrice, carLocked, reward, quickReward, classOf, ALL_EVENTS } from '../data/career.js';
+import { PAINTS, WHEELS, STANCES, GLOWS, FLAMES, defaultLook } from '../render/sprites.js';
 import { UPGRADE_KEYS, MAX_LEVEL, stockLevels, defaultTune, sanitizeTune, buildCar } from '../sim/build.js';
 
 export const SAVE_KEY = 'beltrun-mobile-v1';
@@ -39,13 +40,27 @@ export function migrate(s) {
   for (const [id, o] of Object.entries(s.owned || {})) {
     const car = CAR_BY_ID[id]; if (!car) continue;
     const lv = { ...stockLevels() }; for (const k of UPGRADE_KEYS) lv[k] = Math.max(0, Math.min(MAX_LEVEL, (o.lv?.[k] | 0)));
-    out.owned[id] = { lv, tune: sanitizeTune(car, lv, o.tune || {}) };
+    out.owned[id] = { lv, tune: sanitizeTune(car, lv, o.tune || {}), look: cleanLook(o.look) };
   }
   if (!out.owned.userx4) out.owned.userx4 = { lv: stockLevels(), tune: defaultTune(CAR_BY_ID.userx4) };   // the gift is always yours
   if (!out.owned[out.current]) out.current = 'userx4';
   out.cash = Math.max(0, Math.round(+out.cash || 0));
   out.history = (out.history || []).slice(-30);
   return out;
+}
+
+// Paint & style (see render/sprites.js for the options). Unknown values fall back to factory.
+export const LOOK_OPTIONS = { paint: Object.keys(PAINTS), wheels: Object.keys(WHEELS), stance: Object.keys(STANCES), glow: Object.keys(GLOWS), flame: Object.keys(FLAMES) };
+export const LOOK_PRICES = { paint: 600, wheels: 450, stance: 300, glow: 250, flame: 150 };
+export function cleanLook(l) { const d = defaultLook(), o = {}; for (const k of Object.keys(d)) o[k] = LOOK_OPTIONS[k].includes(l?.[k]) ? l[k] : d[k]; return o; }
+export function buyLook(s, key, value, id = s.current) {
+  const o = s.owned[id]; if (!o || !LOOK_OPTIONS[key]?.includes(value)) return { ok: false, reason: 'bad' };
+  o.look = cleanLook(o.look);
+  if (o.look[key] === value) return { ok: true, price: 0 };
+  const free = value === defaultLook()[key], price = free ? 0 : LOOK_PRICES[key];
+  if (s.cash < price) return { ok: false, reason: 'cash' };
+  s.cash -= price; o.look[key] = value;
+  return { ok: true, price };
 }
 
 export function save(s) { try { storage()?.setItem(SAVE_KEY, JSON.stringify(s)); return true; } catch { return false; } }
@@ -112,6 +127,8 @@ export function applyResult(s, { kind, ev = null, cls = 1, result, carId = s.cur
     if (won) { firstWin = !s.done[ev.id]; payout = firstWin ? ev.reward : Math.round(ev.reward * 0.25 / 25) * 25; s.done[ev.id] = true; }
   } else if (kind === 'quick' || kind === 'online') {
     payout = won ? (purse ?? quickReward(cls)) + bet : -Math.min(bet, s.cash);
+  } else if (kind === 'mode') {
+    payout = won ? (purse ?? 0) : 0;
   }
   if (kind !== 'test') { if (won) s.wins++; else s.losses++; }
   s.cash = Math.max(0, s.cash + payout);

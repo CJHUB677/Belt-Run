@@ -28,11 +28,17 @@ export const shiftZone = (bc, gear) => {
   return { lo: opt - Math.max(250, opt * 0.05), hi: Math.min(bc.limiter, opt + 120), opt };
 };
 
-export function createRace({ player, opponent = null, aiSkill = 3, distance = 'quarter', seed = 1 }) {
+// Roll race: both cars cruise side by side at `roll` m/s in the gear that suits that speed; on
+// green it's flat out from the rolling start (no launch).
+export function rollGear(bc, v) {
+  for (let g = 1; g <= bc.ratios.length; g++) { const rpm = v / bc.r * bc.ratios[g - 1] * bc.final * 60 / (2 * Math.PI); if (rpm < bc.limiter * 0.62) return g; }
+  return bc.ratios.length;
+}
+export function createRace({ player, opponent = null, aiSkill = 3, distance = 'quarter', seed = 1, roll = 0, aiDial = 0 }) {
   const rand = rng(seed);
-  const race = { phase: 'staging', t: 0, phaseT: 0, distance, distM: DIST[distance], lights: 0, cars: [], events: [], finished: false, result: null, goAt: null, rand };
+  const race = { phase: 'staging', t: 0, phaseT: 0, distance, distM: DIST[distance], lights: 0, cars: [], events: [], finished: false, result: null, goAt: null, rand, roll, aiDial };
   const add = (bc, kind) => {
-    const car = { bc, kind, st: createCarState(bc), input: { throttle: false, nitrous: false }, marks: {}, et: null, trap: null, trap8: null, launch: null, shifts: [], finishT: null, samples: [] };
+    const car = { bc, kind, st: roll ? createCarState(bc, { speed: roll, gear: rollGear(bc, roll) }) : createCarState(bc), input: { throttle: false, nitrous: false }, marks: {}, et: null, trap: null, trap8: null, launch: null, shifts: [], finishT: null, samples: [] };
     if (kind === 'ai') {
       const S = AI[aiSkill] || AI[3];
       car.ai = { S, launchRpm: bc.launchRpm * (1 + gauss(rand) * S.launch), shiftAt: optimalShiftRpms(bc).map(r => Math.min(bc.limiter - 40, r * (1 + gauss(rand) * S.shift))), lagLeft: 0 };
@@ -63,10 +69,14 @@ export function shift(race, dir, car = race.cars[0]) {
 function aiInput(race, car) {
   const st = car.st, bc = car.bc, a = car.ai, rpm = rpmOf(st);
   if (race.phase === 'countdown' || race.phase === 'staging') {
-    if (race.phase === 'staging') return { throttle: false };
+    if (race.phase === 'staging' || race.roll) return { throttle: false };
     return { throttle: bc.hasLaunchControl ? true : rpm < a.launchRpm };   // feathering the pedal
   }
   const inp = { throttle: true, nitrous: st.gear >= 2 && st.nosLeft > 0 };
+  if (race.aiDial && race.goAt != null) {          // bracket racer: lift near the stripe rather than break out
+    const t = race.t - race.goAt, proj = t + (race.distM - st.x) / Math.max(1, st.v);
+    if (st.x > race.distM * 0.6 && proj < race.aiDial - 0.004) return { throttle: false, nitrous: false };
+  }
   if (st.gear > 0 && st.gear < bc.ratios.length && st.shiftT === 0 && st.clutch === 'lock' && rpm >= a.shiftAt[st.gear - 1]) {
     a.lagLeft = a.lagLeft || a.S.lag * (0.5 + race.rand());
     a.lagLeft -= SIM_DT; if (a.lagLeft <= 0) { a.lagLeft = 0; shift(race, 1, car); }
@@ -86,6 +96,10 @@ export function stepRace(race, dt = SIM_DT) {
     const inp = car.kind === 'ai' ? aiInput(race, car) : car.input;
     const live = car.finishT == null;
     stepCar(car.bc, car.st, live ? inp : { throttle: false }, dt);
+    if (race.roll && race.phase !== 'run') {          // cruise control until the green light
+      const st = car.st, G_ = car.bc.ratios[st.gear - 1] * car.bc.final;
+      st.v = race.roll; st.wOmega = st.v / car.bc.r; st.eOmega = st.wOmega * G_; st.clutch = 'lock'; st.spinning = false; st.slipV = 0; st.a = 0;
+    }
     if (race.phase === 'run') track(race, car);
   }
   const p = race.cars[0];
@@ -101,9 +115,10 @@ function go(race) {
   race.events.push({ type: 'go', t: race.t });
   for (const car of race.cars) {
     const rpm = rpmOf(car.st), z = launchZone(car.bc);
+    car.st.x = 0;
+    if (race.roll) { car.launch = { rpm, q: 'roll' }; race.events.push({ type: 'launch', car: car.kind, q: 'roll', rpm, t: race.t }); continue; }
     const q = rpm >= z.lo && rpm <= z.hi ? (Math.abs(rpm - z.target) < z.target * 0.05 ? 'perfect' : 'good') : rpm < z.lo ? 'bog' : 'spin';
     car.launch = { rpm, q };
-    car.st.x = 0;
     requestShift(car.bc, car.st, 1);           // clutch drops into first at green
     race.events.push({ type: 'launch', car: car.kind, q, rpm, t: race.t });
   }
@@ -141,13 +156,13 @@ export function slip(c) {
 }
 
 // Robot driver: perfect launch at the tune's launch rpm, optimal shifts, nitrous from 2nd gear.
-export function simulateRun(bc, { distance = 'quarter', nitrous = true } = {}) {
-  const race = createRace({ player: bc, distance, seed: 7 });
+export function simulateRun(bc, { distance = 'quarter', nitrous = true, roll = 0 } = {}) {
+  const race = createRace({ player: bc, distance, seed: 7, roll });
   const car = race.cars[0], shifts = optimalShiftRpms(bc);
   let guard = 0;
   while (!race.finished && guard++ < 240 * 60) {
     const st = car.st, rpm = rpmOf(st);
-    if (race.phase === 'countdown') setThrottle(race, bc.hasLaunchControl || rpm < bc.launchRpm);
+    if (race.phase === 'countdown') setThrottle(race, !roll && (bc.hasLaunchControl || rpm < bc.launchRpm));
     else if (race.phase === 'run') {
       setThrottle(race, true); setNitrous(race, nitrous && st.gear >= 2);
       if (st.gear > 0 && st.gear < bc.ratios.length && st.shiftT === 0 && st.clutch === 'lock' && rpm >= shifts[st.gear - 1]) shift(race, 1);

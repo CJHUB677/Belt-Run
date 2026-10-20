@@ -36,8 +36,9 @@ const server = http.createServer((req, res) => {
 // ───────────────────────── online racing ─────────────────────────
 const rooms = new Map();          // code -> room
 let waiting = null;               // socket waiting for "Find a racer"
-const DISTANCES = ['eighth', 'quarter', 'half'], VENUES = ['ny', 'fl', 'ga', 'tx', 'ja'];
+const DISTANCES = ['eighth', 'quarter', 'half'], VENUES = ['ny', 'fl', 'ga', 'tx', 'ja', 'det', 'la', 'lv', 'tk', 'dxb'];
 const KEYS = ['engine', 'power', 'intake', 'nitrous', 'body', 'tires', 'gearbox'];
+const LOOKS = { paint: ['factory', 'black', 'white', 'silver', 'red', 'orange', 'yellow', 'lime', 'green', 'teal', 'blue', 'purple', 'pink'], wheels: ['factory', 'black', 'gold', 'bronze', 'chrome', 'red'], stance: ['stock', 'lowered', 'slammed'], glow: ['off', 'blue', 'purple', 'green', 'red', 'gold'], flame: ['blue', 'purple', 'green', 'red'] };
 
 const send = (ws, m) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
 const clean = (s, n = 16) => String(s ?? '').replace(/[^\p{L}\p{N} ._'-]/gu, '').trim().slice(0, n);
@@ -47,7 +48,9 @@ function cleanCar(c) {
   const t = c.tune || {}, num = (v, a, b) => Number.isFinite(+v) ? Math.max(a, Math.min(b, +v)) : undefined;
   const tune = { launchRpm: num(t.launchRpm, 1000, 12000), tirePsi: num(t.tirePsi, 10, 45), final: num(t.final, 1, 8), nosSeconds: num(t.nosSeconds, 0, 10), tc: ['street', 'sport', 'off'].includes(t.tc) ? t.tc : 'sport',
     gears: Array.isArray(t.gears) ? t.gears.slice(0, 10).map(g => num(g, 0.3, 7) ?? 1) : undefined };
-  return { id: String(c.id), lv, tune, hp: num(c.hp, 0, 5000) || 0 };
+  const L = c.look || {}, pick = (v, ok, d) => ok.includes(v) ? v : d;
+  const look = { paint: pick(L.paint, LOOKS.paint, 'factory'), wheels: pick(L.wheels, LOOKS.wheels, 'factory'), stance: pick(L.stance, LOOKS.stance, 'stock'), glow: pick(L.glow, LOOKS.glow, 'off'), flame: pick(L.flame, LOOKS.flame, 'blue') };
+  return { id: String(c.id), lv, tune, hp: num(c.hp, 0, 5000) || 0, look };
 }
 function newCode() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c; do { c = Array.from(crypto.randomBytes(4), b => A[b % A.length]).join(''); } while (rooms.has(c)); return c; }
 

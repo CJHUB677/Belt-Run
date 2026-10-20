@@ -55,6 +55,23 @@ After changing anything in `www/`, run `npx cap sync ios` again.
 - **Unlockable builds:** Buj's yellow single-turbo M4 unlocks at 3 wins and the 1Stock build at 5 wins. The bumper-delete Huracán is also in the roster.
 - **Saves:** stored on the device under the key `beltrun-mobile-v1`. A cash bonus carries over from older Belt Run saves.
 
+
+## Story, modes and style (October update)
+- **Story career:** 10 chapters, one per class, each in its own city: Brooklyn → Miami → Atlanta → Detroit → Houston → Los Angeles → Las Vegas → Tokyo → Dubai → back to Brooklyn for the Ghost.
+  - Every class ladder has 12 races plus a boss (130 races in total), with two named rival races per chapter.
+  - Story cards with your crew (Dre and Nia) appear at the start of each chapter and before rival and boss races. A chapter outro plays after you beat each boss.
+  - The Honda Cup in Jamaica has its own short story.
+- **New venues:** Detroit (cold, dense air), Los Angeles, Las Vegas (hot, thin air, so naturally aspirated cars lose power), Tokyo and Dubai, each with its own scenery.
+- **Modes tab:**
+  - **Knockout Cup:** 3 rounds and you're out if you lose once.
+  - **Bracket Racing:** set a dial-in time; running quicker than your dial is a breakout and loses. Rival drivers lift near the finish to avoid breaking out.
+  - **Highway Roll:** a half mile from a 40 mph rolling start.
+  - **Daily Challenge:** a stock car, venue and target time that change every day.
+- **Paint & Style shop** (STYLE in the garage):
+  - 13 paints, 6 wheel finishes, 3 stance heights, underglow colours and nitrous flame colours.
+  - Changes are cosmetic only. Online rivals see your style.
+- **Tire spin:** wheels show motion blur instead of strobing at speed. Spinning tires leave thicker smoke and rubber marks on the road, glow at the contact patch, and show a WHEELSPIN warning.
+
 ## Physics
 The model is a fixed 240 Hz longitudinal simulation (`www/js/sim/`). It covers:
 - Torque curves for NA, turbo and supercharged engines.
