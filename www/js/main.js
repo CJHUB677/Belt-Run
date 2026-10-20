@@ -143,15 +143,16 @@ function rollOpponent(myCls) {
 function renderQuick(body, car, myCls) {
   if (!QUICK.opp || !CAR_BY_ID[QUICK.opp] || Math.abs(classOf(CAR_BY_ID[QUICK.opp]) - myCls) > 1) rollOpponent(myCls);
   const oc = CAR_BY_ID[QUICK.opp], d = DIFF[QUICK.diff], purse = Math.round(quickReward(myCls) * d[3] / 25) * 25;
-  body.innerHTML = `<div class="split" style="flex:1;min-height:0">
-    <div class="side" style="width:44%"><div class="versus"><div class="side"><img src="${thumb(car)}" alt=""><b>${esc(car.name)}</b><span>YOU</span></div><div class="x">VS</div><div class="side"><img src="${thumb(oc)}" alt=""><b>${esc(oc.name)}</b><span>${d[0]} RIVAL</span></div></div>
+  body.innerHTML = `<div class="quick">
+    <div class="q-vs"><div class="versus"><div class="side"><img src="${thumb(car)}" alt=""><b>${esc(car.name)}</b><span>YOU</span></div><div class="x">VS</div><div class="side"><img src="${thumb(oc)}" alt=""><b>${esc(oc.name)}</b><span>${d[0]} RIVAL</span></div></div>
       <button class="btn" id="q-roll">↻ NEW RIVAL</button></div>
-    <div class="main scroll">
-      <div class="setrow"><label>Distance</label><div class="seg" style="grid-column:auto;flex:2">${['eighth', 'quarter', 'half'].map(k => `<button data-d="${k}" class="${QUICK.distance === k ? 'on' : ''}">${DIST_LABEL[k]}</button>`).join('')}</div></div>
-      <div class="setrow"><label>Rival</label><div class="seg" style="grid-column:auto;flex:2">${DIFF.map((x, i) => `<button data-df="${i}" class="${QUICK.diff === i ? 'on' : ''}">${x[0]}</button>`).join('')}</div></div>
-      <div class="setrow"><label>Venue</label><div class="seg" style="grid-column:auto;flex:2">${Object.values(VENUES).map(v => `<button data-v="${v.id}" class="${QUICK.venue === v.id ? 'on' : ''}">${v.id.toUpperCase()}</button>`).join('')}</div></div>
-      <div class="row-btns"><div class="hint" style="flex:1">Win: <b>${money(purse)}</b>. Quick races can be repeated as often as you like.</div><button class="primary" id="q-go">RACE ▸</button></div>
-    </div></div>`;
+    <div class="q-opts">
+      <div class="setrow"><label>Distance</label><div class="seg">${['eighth', 'quarter', 'half'].map(k => `<button data-d="${k}" class="${QUICK.distance === k ? 'on' : ''}">${DIST_LABEL[k]}</button>`).join('')}</div></div>
+      <div class="setrow"><label>Rival</label><div class="seg">${DIFF.map((x, i) => `<button data-df="${i}" class="${QUICK.diff === i ? 'on' : ''}">${x[0]}</button>`).join('')}</div></div>
+      <div class="setrow"><label>Venue</label><div class="seg">${Object.values(VENUES).map(v => `<button data-v="${v.id}" class="${QUICK.venue === v.id ? 'on' : ''}">${v.id.toUpperCase()}</button>`).join('')}</div></div>
+    </div>
+    <div class="q-go"><div class="hint">Win <b>${money(purse)}</b> · repeat as often as you like</div><button class="primary" id="q-go">RACE ▸</button></div>
+  </div>`;
   body.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { QUICK.distance = b.dataset.d; renderRaces(); });
   body.querySelectorAll('[data-df]').forEach(b => b.onclick = () => { QUICK.diff = +b.dataset.df; renderRaces(); });
   body.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { QUICK.venue = b.dataset.v; renderRaces(); });
