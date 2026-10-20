@@ -26,7 +26,9 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
   root.hidden = false; document.body.classList.add('racing');
   $('race-title').textContent = title;
   $('race-dist').textContent = DIST_LABEL[distance];
-  $('btn-nos').hidden = !(player.bc.nosSeconds > 0);
+  $('btn-nos').hidden = false;
+  $('btn-nos').classList.toggle('empty', !(player.bc.nosSeconds > 0));
+  $('btn-nos').classList.remove('on');
   $('race-msg').className = 'race-msg'; $('race-msg').textContent = 'LOADING…';
   await preload([player.car, ...(opponent ? [opponent.car] : [])]);
 
@@ -55,7 +57,18 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
   // ── input ──
   const gasBtn = $('btn-gas'), shiftBtn = $('btn-shift'), downBtn = $('btn-down'), nosBtn = $('btn-nos');
   const gas = on => { if (paused) on = false; setThrottle(race, on); gasBtn.classList.toggle('on', !!on); };
-  const nos = on => { setNitrous(race, on && !paused); nosBtn.classList.toggle('on', !!on); };
+  // Nitrous is a tap-to-fire toggle (one thumb stays on GAS, the other taps SHIFT / N₂O).
+  // It flows while the bottle lasts, in gear, on throttle, and not mid-shift; tap again to save the rest.
+  const hasNos = player.bc.nosSeconds > 0;
+  let nosArmed = false;
+  const nos = on => { nosArmed = !!on && !paused && hasNos && P.st.nosLeft > 0; setNitrous(race, nosArmed); nosBtn.classList.toggle('on', nosArmed); };
+  const nosTap = () => {
+    if (paused) return;
+    if (!hasNos) { msg('NO NITROUS — INSTALL IT IN UPGRADES', 'bad', 1500); return; }
+    if (P.st.nosLeft <= 0) { msg('BOTTLE EMPTY', 'bad', 900); return; }
+    nos(!nosArmed); haptic(nosArmed ? 'medium' : 'light', settings);
+    if (nosArmed && (race.phase !== 'run' || P.st.gear === 0)) msg('N₂O ARMED — FIRES AFTER LAUNCH', 'ok', 1100);
+  };
   const up = () => { if (paused) return; const r = shift(race, 1); if (r.ok) haptic('medium', settings); shiftBtn.classList.add('on'); setTimeout(() => shiftBtn.classList.remove('on'), 120); };
   const down = () => { if (paused) return; const r = shift(race, -1); if (r.ok) haptic('light', settings); };
   const hold = (el, fn) => {
@@ -71,10 +84,10 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
     if (k === 'arrowup' || k === 'w' || k === ' ') { gas(dn); e.preventDefault(); }
     else if (dn && (k === 'arrowright' || k === 'd' || k === 'e' || k === 'shift')) { up(); e.preventDefault(); }
     else if (dn && (k === 'arrowleft' || k === 'a' || k === 'q')) down();
-    else if (k === 'n') nos(dn);
+    else if (dn && k === 'n') nosTap();
     else if (dn && k === 'escape') pause(!paused);
   };
-  const offs = [hold(gasBtn, gas), hold(nosBtn, nos), tap(shiftBtn, up), tap(downBtn, down), tap($('btn-pause'), () => pause(true))];
+  const offs = [hold(gasBtn, gas), tap(nosBtn, nosTap), tap(shiftBtn, up), tap(downBtn, down), tap($('btn-pause'), () => pause(true))];
   addEventListener('keydown', keys); addEventListener('keyup', keys);
   const blur = () => { gas(false); nos(false); if (race.phase === 'run' || race.phase === 'countdown') pause(true); };
   addEventListener('blur', blur);
@@ -124,6 +137,7 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
       stepRace(race, SIM_DT); acc -= SIM_DT;
       // keep running after the result so cars roll through the finish
     }
+    if (nosArmed && P.st.nosLeft <= 0) { nos(false); nosBtn.classList.add('empty'); }
     handleEvents();
     render(dt);
     const mode = race.phase === 'run' || race.phase === 'finished' ? 'race' : 'stage';

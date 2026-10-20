@@ -223,3 +223,6 @@ body.racing #topbar{display:none}
   .modal .versus img{height:58px}.modal h2{font-size:22px}.modal p{font-size:12px;margin:2px 0 6px}
   .slip div b{font-size:16px}.payout{font-size:20px}
 }
+.ctl.nos.empty{opacity:.4;box-shadow:none;border-color:#ffffff30}
+.ctl.nos.on{background:radial-gradient(circle at 50% 35%,#4aa8ff,#123a6b);animation:nosPulse .5s ease-in-out infinite alternate}
+@keyframes nosPulse{from{box-shadow:0 0 12px #4aa8ff}to{box-shadow:0 0 30px #9fd1ff}}
