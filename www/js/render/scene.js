@@ -141,8 +141,18 @@ export function createScene(venueId) {
   return S;
 }
 
-export function layout(W, H) {
-  return { horizon: H * 0.37, roadTop: H * 0.37, farGround: H * 0.50, nearGround: H * 0.665, roadBottom: H * 0.71, farScale: 0.78 };
+// Lanes: index 0 is the near (player) lane. Two lanes keep the classic look; three or four lanes
+// squeeze the far lanes toward the wall and draw them smaller for depth.
+const LANE_SETS = {
+  1: [[0.665, 1]], 2: [[0.665, 1], [0.50, 0.78]],
+  3: [[0.665, 1], [0.555, 0.82], [0.47, 0.68]],
+  4: [[0.665, 1], [0.585, 0.86], [0.515, 0.74], [0.455, 0.64]],
+};
+export function layout(W, H, n = 2) {
+  const set = LANE_SETS[Math.max(1, Math.min(4, n))] || LANE_SETS[2];
+  const lanes = set.map(([g, scale]) => ({ ground: H * g, scale }));
+  const top = n >= 3 ? 0.35 : 0.37;
+  return { horizon: H * top, roadTop: H * top, farGround: (lanes[1] || { ground: H * 0.5 }).ground, nearGround: lanes[0].ground, roadBottom: H * 0.71, farScale: (lanes[1] || { scale: 0.78 }).scale, lanes };
 }
 
 /**
@@ -150,8 +160,8 @@ export function layout(W, H) {
  * cam = { x: world metres at screen anchor, anchorX: px, ppm: px per metre at near lane, distM }
  */
 export function drawScene(g, S, W, H, dpr, cam) {
-  const L = layout(W, H), st = S.st;
-  const key = W + 'x' + H + '@' + dpr;
+  const L = layout(W, H, cam.lanes || 2), st = S.st;
+  const key = W + 'x' + H + '@' + dpr + '#' + L.roadTop;
   if (S.size !== key) { S.size = key; S.far = farLayer(S.id, W, H, L.roadTop, st, dpr); S.mid = midLayer(S.id, W, H, L.roadTop * 0.62, st, dpr); }
   const cx = cam.x * cam.ppm;
   // far (0.03× parallax)
@@ -183,16 +193,16 @@ export function drawScene(g, S, W, H, dpr, cam) {
   for (let i = t0; i < t0 + W / (tex * cam.ppm) + 2; i++) { const x = cam.anchorX + (i * tex - cam.x) * cam.ppm; const h = ((i * 7919) % 13) / 13; g.fillRect(x, L.roadTop + 8 + h * (L.roadBottom - L.roadTop), 2 + h * 10, 1); }
   // fresh rubber from this run's wheelspin (world-space streaks under the driven wheels)
   for (const mk of S.marks) {
-    const sc = mk.lane === 'far' ? cam.ppm * L.farScale : cam.ppm, gy = mk.lane === 'far' ? L.farGround : L.nearGround;
-    const ax = mk.lane === 'far' ? cam.anchorX + (mk.x0 - cam.x) * sc : cam.anchorX + (mk.x0 - cam.x) * sc, bx = cam.anchorX + (mk.x1 - cam.x) * sc;
+    const ln = L.lanes[mk.lane] || L.lanes[L.lanes.length - 1], sc = cam.ppm * ln.scale, gy = ln.ground;
+    const ax = cam.anchorX + (mk.x0 - cam.x) * sc, bx = cam.anchorX + (mk.x1 - cam.x) * sc;
     if (bx < -20 || ax > W + 20) continue;
-    g.fillStyle = `rgba(5,5,6,${Math.min(0.75, mk.a).toFixed(2)})`; g.fillRect(Math.min(ax, bx), gy - 3, Math.abs(bx - ax) + 1, mk.lane === 'far' ? 3 : 4);
+    g.fillStyle = `rgba(5,5,6,${Math.min(0.75, mk.a).toFixed(2)})`; g.fillRect(Math.min(ax, bx), gy - 3, Math.abs(bx - ax) + 1, mk.lane ? 3 : 4);
   }
   // rubber laid down near the start line
-  if (cam.x < 120) { const s0 = cam.anchorX + (0 - cam.x) * cam.ppm; const rb = g.createLinearGradient(s0, 0, s0 + 60 * cam.ppm, 0); rb.addColorStop(0, 'rgba(0,0,0,.45)'); rb.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = rb; g.fillRect(s0 - 10 * cam.ppm, L.nearGround - 18, 70 * cam.ppm, 14); g.fillRect(s0 - 10 * cam.ppm, L.farGround - 12, 70 * cam.ppm, 9); }
+  if (cam.x < 120) { const s0 = cam.anchorX + (0 - cam.x) * cam.ppm; const rb = g.createLinearGradient(s0, 0, s0 + 60 * cam.ppm, 0); rb.addColorStop(0, 'rgba(0,0,0,.45)'); rb.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = rb; for (const ln of L.lanes) g.fillRect(s0 - 10 * cam.ppm, ln.ground - 18 * ln.scale, 70 * cam.ppm, 14 * ln.scale); }
   // lane lines
-  const midLine = (L.farGround + L.nearGround) / 2 + 2;
-  g.fillStyle = 'rgba(255,255,255,.75)'; g.fillRect(0, midLine, W, 2);
+  g.fillStyle = 'rgba(255,255,255,.75)';
+  for (let i = 1; i < L.lanes.length; i++) { const y = (L.lanes[i - 1].ground + L.lanes[i].ground) / 2 + 2 * L.lanes[i].scale; g.fillRect(0, y, W, i === 1 ? 2 : 1.5); }
   g.fillStyle = 'rgba(255,214,0,.6)'; g.fillRect(0, L.roadTop + 3, W, 2); g.fillRect(0, L.roadBottom - 2, W, 2);
   // foreground: curb, gravel and a concrete barrier along the near side (scrolls with the road)
   g.fillStyle = '#d8d8d8'; g.fillRect(0, L.roadBottom, W, 4);
@@ -203,7 +213,7 @@ export function drawScene(g, S, W, H, dpr, cam) {
   g.fillStyle = 'rgba(255,255,255,.05)'; const bs = 4.0, b0 = Math.floor((cam.x - cam.anchorX / (cam.ppm * 1.15)) / bs);
   for (let i = b0; i < b0 + W / (bs * cam.ppm * 1.15) + 2; i++) g.fillRect(cam.anchorX + (i * bs - cam.x) * cam.ppm * 1.15, L.roadBottom + 10, 2, H);
   // marks: start, 60ft, 330ft, 1/8, 1000ft, finish
-  const FT = 0.3048, marks = [[0, 'START'], [60 * FT, '60′'], [330 * FT, '330′'], [201.168, '⅛'], [1000 * FT, '1000′'], [402.336, '¼'], [804.672, '½']].filter(m => m[0] <= cam.distM + 1);
+  const FT = 0.3048, marks = [[0, 'START'], [60 * FT, '60′'], [330 * FT, '330′'], [201.168, '⅛'], [1000 * FT, '1000′'], [402.336, '¼'], [804.672, '½'], [1207.008, '¾'], [1609.344, '1 MI']].filter(m => m[0] <= cam.distM + 1);
   for (const [d, label] of marks) {
     const x = cam.anchorX + (d - cam.x) * cam.ppm;
     if (x < -80 || x > W + 80) continue;
@@ -222,7 +232,7 @@ export function drawScene(g, S, W, H, dpr, cam) {
     g.fillStyle = '#111'; g.font = '800 12px "Barlow Condensed",sans-serif'; g.textAlign = 'center'; g.fillText(isFinish ? 'FINISH' : label, x, L.roadTop - 33);
     g.fillStyle = '#222'; g.fillRect(x - 1, L.roadTop - 28, 2, 14);
     if (isFinish) { // timing gantry
-      g.fillStyle = '#15171c'; g.fillRect(x - 4, L.roadTop - H * 0.3, 8, H * 0.3 + (L.nearGround - L.roadTop)); g.fillRect(x - 4, L.roadTop - H * 0.3, 70, 22);
+      g.fillStyle = '#15171c'; g.fillRect(x - 4, L.roadTop - H * 0.3, 8, H * 0.3 + 6); g.fillRect(x - 4, L.roadTop - H * 0.3, 70, 22);
       g.fillStyle = st.accent; g.fillRect(x + 4, L.roadTop - H * 0.3 + 4, 58, 14);
     }
   }

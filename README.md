@@ -38,7 +38,7 @@ After changing anything in `www/`, run `npx cap sync ios` again.
 - **Garage:** your selected car, its stats, and the menus.
 - **Career:** 10 classes. Each car's class comes from its simulated stock ¼-mile time. Every class has a ladder of 6 events plus a boss, and first wins pay the full prize.
 - **Honda Cup:** a Honda-only ladder in Jamaica.
-- **Quick Race:** repeatable races. You pick the distance (⅛, ¼ or ½ mile), difficulty, venue and an optional side bet.
+- **Quick Race:** repeatable races. You pick the distance (⅛, ¼, ½ or 1 mile), difficulty, venue and an optional side bet.
 - **Test Pass:** a solo run that records your personal best.
 - **Upgrades:** 7 systems with 5 stages each (engine, turbo/supercharger, intake & exhaust, nitrous, weight, tires, transmission). Each stage changes the physics model, not just the displayed numbers.
 - **Tuning:**
@@ -67,6 +67,14 @@ After changing anything in `www/`, run `npx cap sync ios` again.
   - **Bracket Racing:** set a dial-in time; running quicker than your dial is a breakout and loses. Rival drivers lift near the finish to avoid breaking out.
   - **Highway Roll:** a half mile from a 40 mph rolling start.
   - **Daily Challenge:** a stock car, venue and target time that change every day.
+  - **4-Lane Showdown:** you and three class rivals across four lanes. Only first place is paid.
+  - **Mile Monster:** a standing mile against a car one class up.
+  - **No-Prep Night:** grip down 35% and no nitrous, over an eighth mile.
+- **Online: up to 4 phones in one room.** Each racer gets a lane, and the room host picks the distance (up to 1 mile) and venue. The race starts when everyone (2 or more) taps Ready. The result shows your finishing place.
+- **JDM and Honda tuner builds:** 10 fictional builds that reuse the stock cars' photos with their own paint and specs. All figures are game estimates.
+  - Honda: the Civic 9-Second Twin Turbo (EK, twin-turbo K24, sequential gearbox, drag radials; about 9.9 s stock, unlocks at 6 wins) and an Integra K20 Turbo.
+  - JDM: Skyline GT-R 1000, R32 GT-R Street Monster, Supra 2JZ Big Single (unlocks at 10 wins), Silvia SR20 Big Turbo, Evo IX Time Attack, WRX STI EJ25, RX-7 Bridgeport Rotary and Chaser 1JZ.
+- **Speedometer:** choose Classic tach, Speedometer, Digital or Sport dual, plus a gauge colour, in Settings. You can also tap the gauge mid-race to switch styles.
 - **Paint & Style shop** (STYLE in the garage):
   - 13 paints, 6 wheel finishes, 3 stance heights, underglow colours and nitrous flame colours.
   - Changes are cosmetic only. Online rivals see your style.

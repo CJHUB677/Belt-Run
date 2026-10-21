@@ -154,7 +154,7 @@ export function drawCar(ctx, car, x, ground, widthPx, opts = {}) {
     ctx.save(); ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.font = '600 12px "Barlow Condensed",sans-serif'; ctx.textAlign = 'center';
     ctx.fillText(s.error ? 'ART UNAVAILABLE' : 'LOADING…', x, ground - 20); ctx.restore(); return;
   }
-  const look = { ...defaultLook(), ...(opts.look || {}) };
+  const look = { ...defaultLook(), ...(opts.look || car.look || {}) };
   const L = lookImages(car, s, look);
   const k = widthPx / s.w, height = s.h * k, left = x - widthPx / 2;
   // Wheels sit on the road: put the lowest tire bottom at ground

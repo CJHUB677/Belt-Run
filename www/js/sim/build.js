@@ -52,7 +52,7 @@ export function defaultTune(car, lv = stockLevels()) {
   let launchRpm = e.type === 'na' ? Math.round(e.redline * 0.62 / 100) * 100 : (car.phys.drive === 'AWD' ? 3600 : 2800);
   if (e.type === 'supercharged') launchRpm = car.phys.drive === 'AWD' ? 2600 : 2000;
   if (e.type === 'single-turbo') launchRpm = 4500;
-  return { launchRpm, tirePsi: lv.tires >= 3 ? 18 : 30, gears: car.phys.trans.ratios.slice(), final: car.phys.trans.final, nosSeconds: nitrousSpec(car, lv.nitrous).seconds, tc: 'sport' };
+  return { launchRpm, tirePsi: lv.tires >= 3 || car.phys.radial ? 18 : 30, gears: car.phys.trans.ratios.slice(), final: car.phys.trans.final, nosSeconds: nitrousSpec(car, lv.nitrous).seconds, tc: 'sport' };
 }
 
 export function tuneLimits(car, lv) {
@@ -134,7 +134,7 @@ export function buildCar(car, lvIn = stockLevels(), tuneIn = {}, env = { mu: 1, 
   const clutchCap = peakT * 1.5 * (1 + 0.1 * lv.gearbox);
   const hasLaunchControl = ph.factoryLC || lv.gearbox >= 2;
   // Tires
-  const radial = lv.tires >= 3;
+  const radial = lv.tires >= 3 || !!ph.radial;
   const popt = radial ? 17 : 31, k = radial ? 0.08 : 0.035, dev = (tune.tirePsi - popt) / 10;
   const psiF = 1 + k - 2 * k * Math.min(1, dev * dev);
   const lowP = Math.max(0, 35 - tune.tirePsi);
@@ -148,7 +148,7 @@ export function buildCar(car, lvIn = stockLevels(), tuneIn = {}, env = { mu: 1, 
     car, lv, tune, env, type, boosted, turboFam: isTurboType(type),
     tss, tna, peakT, idle: e.idle, redline, limiter, spool0, spool1, spoolRate, lcBoost, scFull,
     ratios: tune.gears, final: tune.final, shiftTime, engageAfterShift, launchEngage, clutchCap, transType, hasLaunchControl,
-    mu: CAL.muStreet * (1 + 0.05 * lv.tires) * psiF * (env.mu ?? 1), tireDrop: radial ? 0.18 : 0.30 - 0.01 * lv.tires,
+    mu: CAL.muStreet * (ph.grip || 1) * (1 + 0.05 * lv.tires) * psiF * (env.mu ?? 1), tireDrop: radial ? 0.18 : 0.30 - 0.01 * lv.tires,
     r: rDriven, crr, drive: ph.drive, rearShare: ph.rearShare, diffF: 1, wt: 1,
     mass, wdf: ph.wdf, cgH: ph.cgH, wb: ph.WB, cdA: ph.cdA, rho: CAL.rho * (env.density ?? 1),
     Iw: wheelI * (ph.drive === 'AWD' ? 4 : 2), IallWheels: wheelI * 4, Ie: 0.10 + 0.035 * e.dispL + (type === 'supercharged' ? 0.05 : 0),

@@ -12,7 +12,7 @@ export function freshSave() {
   return {
     v: 1, cash: STARTING_CASH, wins: 0, losses: 0, current: 'userx4', owned, done: {},
     best: {}, history: [],
-    settings: { muted: false, engineVol: 0.8, fxVol: 0.7, units: 'mph', haptics: true, autoShift: false },
+    settings: { muted: false, engineVol: 0.8, fxVol: 0.7, units: 'mph', haptics: true, autoShift: false, gauge: 'classic', gaugeColor: 'red' },
     created: Date.now(),
   };
 }
@@ -76,7 +76,7 @@ export function buyCar(s, id) {
   const lock = carLocked(car, s); if (lock) return { ok: false, reason: lock };
   if (s.cash < car.price) return { ok: false, reason: 'cash' };
   s.cash -= car.price;
-  s.owned[id] = { lv: stockLevels(), tune: defaultTune(car) };
+  s.owned[id] = { lv: stockLevels(), tune: defaultTune(car), look: cleanLook(car.look) };
   s.current = id;
   return { ok: true };
 }

@@ -5,10 +5,10 @@ import { createCarState, stepCar, requestShift, rpmOf, SIM_DT } from './physics.
 import { optimalShiftRpms } from './build.js';
 
 export const FT = 0.3048;
-export const DIST = { quarter: 402.336, half: 804.672, eighth: 201.168 };
-export const DIST_LABEL = { quarter: '1/4 MILE', half: '1/2 MILE', eighth: '1/8 MILE' };
+export const DIST = { quarter: 402.336, half: 804.672, eighth: 201.168, mile: 1609.344 };
+export const DIST_LABEL = { quarter: '1/4 MILE', half: '1/2 MILE', eighth: '1/8 MILE', mile: '1 MILE' };
 export const MS_TO_MPH = 2.236936;
-const MARKS = [['ft60', 60 * FT], ['ft330', 330 * FT], ['eighth', DIST.eighth], ['ft1000', 1000 * FT], ['quarter', DIST.quarter], ['half', DIST.half]];
+const MARKS = [['ft60', 60 * FT], ['ft330', 330 * FT], ['eighth', DIST.eighth], ['ft1000', 1000 * FT], ['quarter', DIST.quarter], ['half', DIST.half], ['mile', DIST.mile]];
 
 export function rng(seed) { let s = (seed >>> 0) || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
 const gauss = r => { let u = 0; while (u === 0) u = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r()); };
@@ -34,19 +34,21 @@ export function rollGear(bc, v) {
   for (let g = 1; g <= bc.ratios.length; g++) { const rpm = v / bc.r * bc.ratios[g - 1] * bc.final * 60 / (2 * Math.PI); if (rpm < bc.limiter * 0.62) return g; }
   return bc.ratios.length;
 }
-export function createRace({ player, opponent = null, aiSkill = 3, distance = 'quarter', seed = 1, roll = 0, aiDial = 0 }) {
+// opponents: extra AI cars [{ bc, ai }] for multi-lane races (opponent stays the lane-2 rival).
+export function createRace({ player, opponent = null, opponents = [], aiSkill = 3, distance = 'quarter', seed = 1, roll = 0, aiDial = 0 }) {
   const rand = rng(seed);
   const race = { phase: 'staging', t: 0, phaseT: 0, distance, distM: DIST[distance], lights: 0, cars: [], events: [], finished: false, result: null, goAt: null, rand, roll, aiDial };
-  const add = (bc, kind) => {
+  const add = (bc, kind, skill = aiSkill) => {
     const car = { bc, kind, st: roll ? createCarState(bc, { speed: roll, gear: rollGear(bc, roll) }) : createCarState(bc), input: { throttle: false, nitrous: false }, marks: {}, et: null, trap: null, trap8: null, launch: null, shifts: [], finishT: null, samples: [] };
     if (kind === 'ai') {
-      const S = AI[aiSkill] || AI[3];
+      const S = AI[skill] || AI[3];
       car.ai = { S, launchRpm: bc.launchRpm * (1 + gauss(rand) * S.launch), shiftAt: optimalShiftRpms(bc).map(r => Math.min(bc.limiter - 40, r * (1 + gauss(rand) * S.shift))), lagLeft: 0 };
     }
     race.cars.push(car);
   };
   add(player, 'player');
   if (opponent) add(opponent, 'ai');
+  for (const o of opponents) add(o.bc, 'ai', o.ai || aiSkill);
   return race;
 }
 
@@ -107,7 +109,7 @@ export function stepRace(race, dt = SIM_DT) {
     const tt = race.t - race.goAt;
     if (!p.samples.length || tt - p.samples[p.samples.length - 1][0] >= 1 / 30) p.samples.push([+tt.toFixed(3), +p.st.x.toFixed(2)]);
   }
-  if (race.phase === 'run' && race.cars.every(c => c.finishT != null || race.t - race.goAt > 45)) finish(race);
+  if (race.phase === 'run' && race.cars.every(c => c.finishT != null || race.t - race.goAt > 80)) finish(race);
 }
 
 function go(race) {
@@ -144,9 +146,11 @@ function finish(race) {
   race.phase = 'finished'; race.finished = true;
   const [p, o] = race.cars;
   const T = c => c.et ?? Infinity;
-  const winner = !o ? 'player' : T(p) <= T(o) ? 'player' : 'ai';
-  const margin = o && isFinite(T(p)) && isFinite(T(o)) ? Math.abs(T(p) - T(o)) : null;
-  race.result = { winner, margin, player: slip(p), opponent: o ? slip(o) : null };
+  const rivals = race.cars.slice(1), best = rivals.reduce((b, c) => (T(c) < T(b) ? c : b), o);
+  const place = 1 + rivals.filter(c => T(c) < T(p)).length;
+  const winner = !o ? 'player' : place === 1 && T(p) < Infinity ? 'player' : 'ai';
+  const margin = best && isFinite(T(p)) && isFinite(T(best)) ? Math.abs(T(p) - T(best)) : null;
+  race.result = { winner, margin, place, field: race.cars.length, player: slip(p), opponent: best ? slip(best) : null, rivals: rivals.map(slip) };
   race.events.push({ type: 'result', winner, t: race.t });
 }
 
@@ -160,7 +164,7 @@ export function simulateRun(bc, { distance = 'quarter', nitrous = true, roll = 0
   const race = createRace({ player: bc, distance, seed: 7, roll });
   const car = race.cars[0], shifts = optimalShiftRpms(bc);
   let guard = 0;
-  while (!race.finished && guard++ < 240 * 60) {
+  while (!race.finished && guard++ < 240 * 90) {
     const st = car.st, rpm = rpmOf(st);
     if (race.phase === 'countdown') setThrottle(race, !roll && (bc.hasLaunchControl || rpm < bc.launchRpm));
     else if (race.phase === 'run') {

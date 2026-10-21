@@ -1,4 +1,4 @@
-// Belt Run server (Railway): serves www/ and runs online head-to-head drag races over WebSocket (/ws).
+// Belt Run server (Railway): serves www/ and runs online drag races for up to four phones over WebSocket (/ws).
 // Each phone simulates its own car with the shared physics; the server pairs racers, starts both
 // countdowns at the same instant, relays live car positions, and decides the winner from both
 // time slips. Rooms live in memory (a race lasts seconds; nothing needs to survive a restart).
@@ -36,7 +36,7 @@ const server = http.createServer((req, res) => {
 // ───────────────────────── online racing ─────────────────────────
 const rooms = new Map();          // code -> room
 let waiting = null;               // socket waiting for "Find a racer"
-const DISTANCES = ['eighth', 'quarter', 'half'], VENUES = ['ny', 'fl', 'ga', 'tx', 'ja', 'det', 'la', 'lv', 'tk', 'dxb'];
+const DISTANCES = ['eighth', 'quarter', 'half', 'mile'], VENUES = ['ny', 'fl', 'ga', 'tx', 'ja', 'det', 'la', 'lv', 'tk', 'dxb'];
 const KEYS = ['engine', 'power', 'intake', 'nitrous', 'body', 'tires', 'gearbox'];
 const LOOKS = { paint: ['factory', 'black', 'white', 'silver', 'red', 'orange', 'yellow', 'lime', 'green', 'teal', 'blue', 'purple', 'pink'], wheels: ['factory', 'black', 'gold', 'bronze', 'chrome', 'red'], stance: ['stock', 'lowered', 'slammed'], glow: ['off', 'blue', 'purple', 'green', 'red', 'gold'], flame: ['blue', 'purple', 'green', 'red'] };
 
@@ -54,14 +54,17 @@ function cleanCar(c) {
 }
 function newCode() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c; do { c = Array.from(crypto.randomBytes(4), b => A[b % A.length]).join(''); } while (rooms.has(c)); return c; }
 
+const SEATS = 4;                  // up to four lanes: you plus three rivals
+const hostOf = room => room.seats.findIndex(p => p && !p.gone);
 function roomView(room, seat) {
-  return { t: 'room', room: { code: room.code, you: seat, host: 0, status: room.status, distance: room.distance, venue: room.venue,
+  return { t: 'room', room: { code: room.code, you: seat, host: hostOf(room), status: room.status, distance: room.distance, venue: room.venue, max: SEATS,
     players: room.seats.map(p => p && { name: p.name, car: p.car, ready: p.ready, connected: p.ws?.readyState === 1, wins: p.wins }) } };
 }
-function broadcastRoom(room) { room.seats.forEach((p, i) => p && send(p.ws, roomView(room, i))); }
+function broadcastRoom(room) { room.seats.forEach((p, i) => p && p.ws && send(p.ws, roomView(room, i))); }
+const others = (room, i) => room.seats.map((p, k) => k !== i && p && p.ws ? p : null).filter(Boolean);
 
-function makeRoom(ws) {
-  const room = { code: newCode(), seats: [null, null], status: 'lobby', distance: 'quarter', venue: 'ny', results: [null, null], timer: null, created: Date.now() };
+function makeRoom() {
+  const room = { code: newCode(), seats: Array(SEATS).fill(null), status: 'lobby', distance: 'quarter', venue: 'ny', results: Array(SEATS).fill(null), timer: null, created: Date.now() };
   rooms.set(room.code, room);
   return room;
 }
@@ -73,24 +76,27 @@ function leave(ws, why = 'left') {
   if (waiting === ws) waiting = null;
   const room = ws.room; if (!room) return;
   ws.room = null;
-  const i = ws.seat, other = room.seats[1 - i];
+  const i = ws.seat, me = room.seats[i];
+  if (!me) return;
   if (room.status === 'racing') {
-    // Mid-race: the other racer still gets a result; this seat is a DNF.
-    room.seats[i].ws = null; room.seats[i].gone = true;
+    // Mid-race: everyone else still gets a result; this seat is a DNF.
+    me.ws = null; me.gone = true;
     maybeFinish(room);
   } else room.seats[i] = null;
-  if (other) send(other.ws, { t: 'notice', msg: why === 'left' ? 'Your rival left the room' : 'Your rival disconnected' });
+  for (const o of others(room, i)) send(o.ws, { t: 'notice', msg: (me.name || 'A racer') + (why === 'left' ? ' left the room' : ' disconnected') });
   if (!room.seats.some(p => p && p.ws)) { clearTimeout(room.timer); rooms.delete(room.code); return; }
-  if (room.status !== 'racing') { room.status = 'lobby'; if (room.seats[0] == null && room.seats[1]) { room.seats[0] = room.seats[1]; room.seats[1] = null; room.seats[0].ws.seat = 0; } }
+  if (room.status !== 'racing') room.status = 'lobby';
   broadcastRoom(room);
 }
 function tryStart(room) {
-  if (room.status !== 'lobby' || !room.seats.every(p => p && p.ready && p.ws?.readyState === 1)) return;
-  room.status = 'racing'; room.results = [null, null];
+  const seated = room.seats.filter(Boolean);
+  if (room.status !== 'lobby' || seated.length < 2 || !seated.every(p => p.ready && p.ws?.readyState === 1)) return;
+  room.status = 'racing'; room.results = Array(SEATS).fill(null);
   const at = Date.now() + 3500, seed = crypto.randomInt(1, 1e9);
-  room.seats.forEach((p, i) => { p.ready = false; p.gone = false; send(p.ws, { t: 'start', at, seed, seat: i, distance: room.distance, venue: room.venue, players: room.seats.map(q => ({ name: q.name, car: q.car })) }); });
+  const players = room.seats.map(q => q && { name: q.name, car: q.car });
+  room.seats.forEach((p, i) => { if (!p) return; p.ready = false; p.gone = false; send(p.ws, { t: 'start', at, seed, seat: i, distance: room.distance, venue: room.venue, players }); });
   clearTimeout(room.timer);
-  room.timer = setTimeout(() => finishRoom(room), 3500 + 60_000);   // nobody takes a minute for a half mile
+  room.timer = setTimeout(() => finishRoom(room), 3500 + 90_000);   // a full mile takes well under 90 s
 }
 function maybeFinish(room) {
   if (room.status !== 'racing') return;
@@ -101,10 +107,13 @@ function finishRoom(room) {
   clearTimeout(room.timer);
   room.status = 'lobby';
   const et = i => room.results[i]?.et ?? Infinity;
-  const winner = et(0) === Infinity && et(1) === Infinity ? -1 : et(0) <= et(1) ? 0 : 1;
+  // finishing order: seats that raced, quickest ET first (DNFs last)
+  const order = room.seats.map((p, i) => p ? i : -1).filter(i => i >= 0).sort((a, b) => et(a) - et(b));
+  const winner = order.length && et(order[0]) < Infinity ? order[0] : -1;
   if (winner >= 0 && room.seats[winner]) room.seats[winner].wins++;
-  room.seats.forEach(p => p && p.ws && send(p.ws, { t: 'result', results: room.results, winner }));
-  for (let i = 0; i < 2; i++) if (room.seats[i]?.gone) room.seats[i] = null;
+  const names = room.seats.map(p => p ? p.name : null);
+  room.seats.forEach(p => p && p.ws && send(p.ws, { t: 'result', results: room.results, winner, order, names }));
+  for (let i = 0; i < SEATS; i++) if (room.seats[i]?.gone) room.seats[i] = null;
   if (!room.seats.some(p => p && p.ws)) rooms.delete(room.code); else broadcastRoom(room);
 }
 
@@ -128,7 +137,8 @@ wss.on('connection', ws => {
         if (!r) return send(ws, { t: 'error', msg: 'No room with that code' });
         if (r === room) return broadcastRoom(r);
         const free = r.seats.findIndex(s => !s);
-        if (free < 0 || r.status !== 'lobby') return send(ws, { t: 'error', msg: 'That room is full' });
+        if (r.status !== 'lobby') return send(ws, { t: 'error', msg: 'That room is mid-race — try again in a few seconds' });
+        if (free < 0) return send(ws, { t: 'error', msg: 'That room is full (4 racers)' });
         if (!ws.car) return send(ws, { t: 'error', msg: 'Pick a car first' });
         leave(ws); seatPlayer(r, ws, free); return broadcastRoom(r);
       }
@@ -143,7 +153,7 @@ wss.on('connection', ws => {
       case 'unqueue': if (waiting === ws) waiting = null; return send(ws, { t: 'unqueued' });
       case 'leave': leave(ws); return send(ws, { t: 'left' });
       case 'settings':
-        if (!room || ws.seat !== 0 || room.status !== 'lobby') return;
+        if (!room || ws.seat !== hostOf(room) || room.status !== 'lobby') return;
         if (DISTANCES.includes(m.distance)) room.distance = m.distance;
         if (VENUES.includes(m.venue)) room.venue = m.venue;
         room.seats.forEach(p => p && (p.ready = false));
@@ -152,13 +162,13 @@ wss.on('connection', ws => {
         if (!room || room.status !== 'lobby') return;
         if (m.car) { const c = cleanCar(m.car); if (c) ws.car = room.seats[ws.seat].car = c; }
         room.seats[ws.seat].ready = !!m.ready; broadcastRoom(room); return tryStart(room);
-      case 'state': { if (!room || room.status !== 'racing') return; const o = room.seats[1 - ws.seat]; if (o) send(o.ws, { t: 'state', s: m.s }); return; }
+      case 'state': { if (!room || room.status !== 'racing') return; const msg = JSON.stringify({ t: 'state', from: ws.seat, s: m.s }); for (const o of others(room, ws.seat)) if (o.ws.readyState === 1) o.ws.send(msg); return; }
       case 'finish': {
         if (!room || room.status !== 'racing' || room.results[ws.seat]) return;
         const s = m.slip || {}, n = v => Number.isFinite(+v) && +v > 0 && +v < 120 ? +v : null;
         room.results[ws.seat] = { et: n(s.et), trap: n(s.trap), ft60: n(s.ft60), launch: clean(s.launch, 8), perfectShifts: s.perfectShifts | 0, shifts: s.shifts | 0 };
         if (room.results[ws.seat].et == null) room.results[ws.seat] = { et: null, dnf: true };
-        const o = room.seats[1 - ws.seat]; if (o) send(o.ws, { t: 'rivalFinished', et: room.results[ws.seat].et });
+        for (const o of others(room, ws.seat)) send(o.ws, { t: 'rivalFinished', from: ws.seat, name: room.seats[ws.seat]?.name, et: room.results[ws.seat].et });
         return maybeFinish(room);
       }
     }

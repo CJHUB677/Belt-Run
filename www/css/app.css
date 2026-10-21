@@ -299,3 +299,9 @@ body.racing #topbar{display:none}
 .sw.on small{color:var(--accent)}
 .garage-nav button{padding:0 8px}
 @media (max-width:720px){.garage-nav button{font-size:13px}.garage-nav i{display:none}}
+/* 4-lane online rooms */
+.on-players.lanes4,.on-players.lanes3{grid-template-columns:repeat(4,minmax(0,1fr))}
+.on-players.lanes3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.on-players.lanes4 .on-p b{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.on-players.lanes4 .on-p span{font-size:11px}
+.on-players.lanes4 .on-p img{height:clamp(30px,10vh,64px)}

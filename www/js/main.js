@@ -10,11 +10,13 @@ import { drawCar, loadSprite, onSpriteLoad } from './render/sprites.js';
 import { startRace, haptic } from './game/raceScreen.js';
 import * as Audio from './audio/audio.js';
 import { createOnline } from './net/online.js';
+import { GAUGES, GAUGE_COLORS } from './render/hud.js';
+addEventListener('beltrun:settings', () => persist());
 
 const $ = id => document.getElementById(id);
 const money = n => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
 const fmt3 = t => (t == null || !isFinite(t) ? '—' : t.toFixed(3));
-const thumb = c => `assets/thumbs/${c.id}.webp`;
+const thumb = c => c.thumb || `assets/thumbs/${c.id}.webp`;
 const esc = s => String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
 let S = load();
@@ -155,7 +157,7 @@ function renderQuick(body, car, myCls) {
     <div class="q-vs"><div class="versus"><div class="side"><img src="${thumb(car)}" alt=""><b>${esc(car.name)}</b><span>YOU</span></div><div class="x">VS</div><div class="side"><img src="${thumb(oc)}" alt=""><b>${esc(oc.name)}</b><span>${d[0]} RIVAL</span></div></div>
       <button class="btn" id="q-roll">↻ NEW RIVAL</button></div>
     <div class="q-opts">
-      <div class="setrow"><label>Distance</label><div class="seg">${['eighth', 'quarter', 'half'].map(k => `<button data-d="${k}" class="${QUICK.distance === k ? 'on' : ''}">${DIST_LABEL[k]}</button>`).join('')}</div></div>
+      <div class="setrow"><label>Distance</label><div class="seg">${['eighth', 'quarter', 'half', 'mile'].map(k => `<button data-d="${k}" class="${QUICK.distance === k ? 'on' : ''}">${DIST_LABEL[k]}</button>`).join('')}</div></div>
       <div class="setrow"><label>Rival</label><div class="seg">${DIFF.map((x, i) => `<button data-df="${i}" class="${QUICK.diff === i ? 'on' : ''}">${x[0]}</button>`).join('')}</div></div>
       <div class="setrow"><label>Venue</label><div class="seg">${Object.values(VENUES).map(v => `<button data-v="${v.id}" class="${QUICK.venue === v.id ? 'on' : ''}">${v.id.toUpperCase()}</button>`).join('')}</div></div>
     </div>
@@ -177,18 +179,23 @@ function renderTest(body, car) {
   body.querySelectorAll('[data-tv]').forEach(b => b.onclick = () => launch({ kind: 'test', venue: b.dataset.tv, distance: 'quarter', opp: null, title: 'Test Pass' }));
 }
 
+const envOf = cfg => cfg.gripMul ? { ...VENUES[cfg.venue], mu: VENUES[cfg.venue].mu * cfg.gripMul } : VENUES[cfg.venue];
 function oppBuild(opp, env) { const c = CAR_BY_ID[opp.car]; return buildCar(c, opp.lv, defaultTune(c, opp.lv), env); }
 function playerFor(cfg, env) {
   if (cfg.borrow) { const car = CAR_BY_ID[cfg.borrow]; return { car, bc: buildCar(car, {}, defaultTune(car), env), look: null }; }
-  return { car: CAR_BY_ID[S.current], bc: carBuild(S.current, env), look: S.owned[S.current].look };
+  const o = S.owned[S.current], car = CAR_BY_ID[S.current];
+  const bc = cfg.noNos ? buildCar(car, { ...o.lv, nitrous: 0 }, o.tune, env) : carBuild(S.current, env);
+  return { car, bc, look: o.look };
 }
 function preRace(cfg) {
-  const env = VENUES[cfg.venue], pl = playerFor(cfg, env), car = pl.car, me = pl.bc;
+  const env = envOf(cfg), pl = playerFor(cfg, env), car = pl.car, me = pl.bc;
   if (!cfg.opp) return soloPreRace(cfg, pl);
   const oc = CAR_BY_ID[cfg.opp.car], them = oppBuild(cfg.opp, env);
+  const more = (cfg.opps || []).map(o => CAR_BY_ID[o.car]);
   modal(`<h2>${esc(cfg.title)}</h2><p>${env.name} · ${esc(env.track)} · ${DIST_LABEL[cfg.distance]} · ${env.temp}°F</p>
     <div class="versus"><div class="side"><img src="${thumb(car)}" alt=""><b>${esc(car.name)}</b><span>${hpOf(me)} HP · ${Math.round(me.mass - 80)} KG · ${car.drive}</span></div><div class="x">VS</div>
     <div class="side"><img src="${thumb(oc)}" alt=""><b>${esc(oc.name)}</b><span>${hpOf(them)} HP · ${Math.round(them.mass - 80)} KG · ${oc.drive}</span></div></div>
+    ${more.length ? `<p class="note">Also in lanes 3–${more.length + 2}: ${more.map(c => `<b>${esc(c.name)}</b>`).join(' · ')}</p>` : ''}
     ${cfg.note ? `<p class="note">${cfg.note}</p>` : ''}
     <p>${cfg.roll ? '<b>Roll race:</b> both cars cruise at 40 mph. Floor it on green and shift on the lights.' : '<b>How to race:</b> hold GAS during the countdown'} and keep the needle in the green launch zone. The clutch drops on green. Tap SHIFT when the needle reaches the green arc / the shift lights fill. ${me.nosSeconds ? 'Tap N₂O to fire it.' : ''}${cfg.roll ? '' : me.hasLaunchControl ? ' Your car has launch control: flat-foot it.' : ' No launch control: feather the pedal.'}</p>
     <div class="row-btns"><button class="ghost" id="pr-cancel">BACK</button><button class="primary" id="pr-go">STAGE ▸</button></div>`, c => {
@@ -199,10 +206,11 @@ function preRace(cfg) {
 
 async function launch(cfg) {
   Audio.unlock();
-  const env = VENUES[cfg.venue];
+  const env = envOf(cfg);
   const player = playerFor(cfg, env);
   const opponent = cfg.opp ? { car: CAR_BY_ID[cfg.opp.car], bc: oppBuild(cfg.opp, env), ai: cfg.opp.ai } : null;
-  await startRace({ player, opponent, distance: cfg.distance, venue: cfg.venue, settings: S.settings, title: cfg.title, roll: cfg.roll || 0, aiDial: cfg.aiDial || 0,
+  const opponents = (cfg.opps || []).map(o => ({ car: CAR_BY_ID[o.car], bc: oppBuild(o, env), ai: o.ai }));
+  await startRace({ player, opponent, opponents, distance: cfg.distance, venue: cfg.venue, settings: S.settings, title: cfg.title, roll: cfg.roll || 0, aiDial: cfg.aiDial || 0,
     onFinish: race => results(cfg, race), onQuit: () => { toast('Race abandoned — no result'); go(screen); } });
 }
 
@@ -212,10 +220,13 @@ function results(cfg, race) {
   const out = applyResult(S, { kind: cfg.kind, ev: cfg.ev || null, cls: cfg.cls || classOf(CAR_BY_ID[carId]), result: r, carId, distance: cfg.distance, bet: cfg.bet || 0, purse: cfg.purse ?? null });
   persist();
   const p = r.player, o = r.opponent, won = out.won;
-  const title = cfg.kind === 'test' ? 'TIME SLIP' : cfg.kind === 'online' && r.online ? (won ? 'YOU BEAT ' + esc(String(r.online.rival || 'YOUR RIVAL')).toUpperCase() : esc(String(r.online.rival || 'YOUR RIVAL')).toUpperCase() + ' WINS') : won ? (cfg.ev?.boss ? 'BOSS BEATEN!' : 'YOU WIN') : 'YOU LOSE';
+  const ORD = ['', '1ST', '2ND', '3RD', '4TH'];
+  const title = cfg.kind === 'test' ? 'TIME SLIP' : cfg.kind === 'online' && r.online && (r.online.field || 2) > 2 ? (won ? `1ST OF ${r.online.field} — YOU WIN` : `${ORD[r.online.place] || 'LAST'} OF ${r.online.field} · ${esc(String(r.online.rival || 'RIVAL')).toUpperCase()} WINS`)
+    : cfg.kind === 'online' && r.online ? (won ? 'YOU BEAT ' + esc(String(r.online.rival || 'YOUR RIVAL')).toUpperCase() : esc(String(r.online.rival || 'YOUR RIVAL')).toUpperCase() + ' WINS')
+    : (r.field || 2) > 2 ? (won ? `1ST OF ${r.field} — YOU WIN` : `${ORD[r.place] || 'LAST'} OF ${r.field}`) : won ? (cfg.ev?.boss ? 'BOSS BEATEN!' : 'YOU WIN') : 'YOU LOSE';
   const launchQ = { perfect: 'PERFECT', good: 'GOOD', bog: 'BOGGED', spin: 'SPUN', roll: 'ROLLING' }[p.launch?.q] || '—';
   const unlocks = CARS.filter(c => c.wins && S.wins === c.wins && won && cfg.kind !== 'test');
-  const rivalLbl = cfg.kind === 'online' && r.online ? esc(String(r.online.rival || 'RIVAL')).toUpperCase() + ' ET' : 'RIVAL ET';
+  const rivalLbl = (r.field || 2) > 2 ? 'BEST RIVAL ET' : cfg.kind === 'online' && r.online ? esc(String(r.online.rival || 'RIVAL')).toUpperCase() + ' ET' : 'RIVAL ET';
   modal(`<h2 class="${cfg.kind === 'test' ? '' : won ? 'win' : 'lose'}">${title}</h2>
     <p>${esc(CAR_BY_ID[carId].name)} · ${VENUES[cfg.venue].name} · ${DIST_LABEL[cfg.distance]}${o ? ` · margin ${r.margin != null ? r.margin.toFixed(3) + ' s' : '—'}` : ''}${out.pb ? ' · <b style="color:var(--accent)">NEW PERSONAL BEST</b>' : ''}</p>
     <div class="slip">
@@ -257,12 +268,17 @@ net.on('notice', m => toast(m.msg));
 net.on('error', m => toast(m.msg));
 net.on('start', m => {
   closeModal();
-  const opp = m.players[1 - m.seat], oc = CAR_BY_ID[opp.car?.id] || CAR_BY_ID.f82, env = VENUES[m.venue] || VENUES.ny;
-  const oppBc = buildCar(oc, opp.car?.lv || {}, opp.car?.tune || {}, env);
-  const cfg = { kind: 'online', venue: m.venue, distance: m.distance, opp: null, title: 'Online · vs ' + opp.name, purse: Math.round(quickReward(classOf(CAR_BY_ID[S.current])) * 1.2 / 25) * 25 };
+  const env = VENUES[m.venue] || VENUES.ny;
+  const opps = m.players.map((p, seat) => {
+    if (!p || seat === m.seat) return null;
+    const oc = CAR_BY_ID[p.car?.id] || CAR_BY_ID.f82;
+    return { seat, car: oc, bc: buildCar(oc, p.car?.lv || {}, p.car?.tune || {}, env), name: p.name, look: cleanLook(p.car?.look) };
+  }).filter(Boolean);
+  const field = opps.length + 1;
+  const cfg = { kind: 'online', venue: m.venue, distance: m.distance, opp: null, title: field > 2 ? `Online · ${field}-lane race` : 'Online · vs ' + opps[0].name, purse: Math.round(quickReward(classOf(CAR_BY_ID[S.current])) * (field > 2 ? 0.6 + 0.4 * field : 1.2) / 25) * 25 };
   Audio.unlock();
   startRace({ player: { car: CAR_BY_ID[S.current], bc: carBuild(S.current, env), look: S.owned[S.current].look }, distance: m.distance, venue: m.venue, settings: S.settings, title: cfg.title,
-    online: { net, seat: m.seat, startPerf: net.perfAt(m.at), opp: { car: oc, bc: oppBc, name: opp.name, look: cleanLook(opp.car?.look) } },
+    online: { net, seat: m.seat, startPerf: net.perfAt(m.at), opps },
     onFinish: race => results(cfg, race), onQuit: () => { toast('You left the race — counted as a loss for this run'); raceTab = 'online'; go('races'); } });
 });
 
@@ -287,28 +303,29 @@ function renderOnline(body, car) {
         <button class="btn" id="on-create">CREATE A ROOM</button>
         <div class="on-join"><input id="on-code" maxlength="4" placeholder="CODE" value="${esc(onlineCode)}" autocapitalize="characters" autocomplete="off"><button class="btn" id="on-join">JOIN</button></div>
       </div>
-      <p class="hint">Make a room and send the 4-letter code (or link) to a friend, or tap Find a racer to be paired with anyone who is searching.</p></div>`;
+      <p class="hint">Make a room and send the 4-letter code (or link) to up to three friends — four lanes, four phones — or tap Find a racer to be paired with anyone who is searching.</p></div>`;
     $('on-find').onclick = async () => { await ensureOnline(); net.send({ t: net.queued ? 'unqueue' : 'queue' }); };
     $('on-create').onclick = async () => { await ensureOnline(); net.send({ t: 'create' }); };
     $('on-join').onclick = async () => { const c = $('on-code').value.trim().toUpperCase(); if (c.length !== 4) { toast('Enter the 4-letter room code'); return; } onlineCode = c; await ensureOnline(); net.send({ t: 'join', code: c }); };
     return;
   }
-  const me = room.players[room.you], them = room.players[1 - room.you], host = room.you === 0;
+  const me = room.players[room.you], host = room.you === room.host;
+  const count = room.players.filter(Boolean).length, max = room.max || room.players.length;
   const pcard = (p, label) => {
-    if (!p) return `<div class="on-p empty"><span class="mk">${label}</span><b>Waiting for a rival…</b><span class="hint">Share the code ${esc(room.code)}</span></div>`;
+    if (!p) return `<div class="on-p empty"><span class="mk">${label}</span><b>Open lane</b><span class="hint">Share code ${esc(room.code)}</span></div>`;
     const c = CAR_BY_ID[p.car?.id];
     return `<div class="on-p ${p.ready ? 'ready' : ''}"><span class="mk">${label}${p.wins ? ' · ' + p.wins + ' WIN' + (p.wins > 1 ? 'S' : '') : ''}</span><img src="${c ? thumb(c) : ''}" alt=""><b>${esc(p.name)}</b><span>${c ? esc(c.name) : '—'} · ${Math.round(p.car?.hp || 0)} HP</span><span class="badge ${p.ready ? 'go' : ''}">${p.ready ? 'READY' : p.connected === false ? 'OFFLINE' : 'NOT READY'}</span></div>`;
   };
   const link = location.origin + location.pathname + '?room=' + room.code;
   body.innerHTML = `<div class="online room">
     <div class="on-code"><span>ROOM</span><b>${esc(room.code)}</b><button class="btn" id="on-share">SHARE LINK</button><button class="ghost" id="on-leave">LEAVE</button></div>
-    <div class="on-players">${pcard(me, 'YOU')}<div class="x">VS</div>${pcard(them, 'RIVAL')}</div>
+    <div class="on-players lanes${max}">${pcard(me, 'YOU · LANE 1')}${room.players.map((p, i) => i === room.you ? '' : p).filter(p => p !== '').map((p, k) => pcard(p, 'LANE ' + (k + 2) + (p && room.players.indexOf(p) === room.host ? ' · HOST' : ''))).join('')}</div>
     <div class="on-set">
-      <div class="seg">${['eighth', 'quarter', 'half'].map(k => `<button data-od="${k}" class="${room.distance === k ? 'on' : ''}" ${host ? '' : 'disabled'}>${DIST_LABEL[k]}</button>`).join('')}</div>
+      <div class="seg">${['eighth', 'quarter', 'half', 'mile'].map(k => `<button data-od="${k}" class="${room.distance === k ? 'on' : ''}" ${host ? '' : 'disabled'}>${DIST_LABEL[k]}</button>`).join('')}</div>
       <div class="seg">${Object.values(VENUES).map(v => `<button data-ov="${v.id}" class="${room.venue === v.id ? 'on' : ''}" ${host ? '' : 'disabled'}>${v.id.toUpperCase()}</button>`).join('')}</div>
-      <button class="primary" id="on-ready" ${them ? '' : 'disabled'}>${me.ready ? 'CANCEL READY' : 'READY ▸'}</button>
+      <button class="primary" id="on-ready" ${count >= 2 ? '' : 'disabled'}>${me.ready ? 'CANCEL READY' : 'READY ▸'}</button>
     </div>
-    <p class="hint">${host ? 'You pick the distance and venue.' : 'The room host picks the distance and venue.'} The race starts when both of you tap Ready.</p></div>`;
+    <p class="hint">${host ? 'You pick the distance and venue.' : 'The room host picks the distance and venue.'} Up to ${max} racers — each extra phone gets its own lane. The race starts when everyone in the room taps Ready (2 or more).</p></div>`;
   body.querySelectorAll('[data-od]').forEach(b => b.onclick = () => net.send({ t: 'settings', distance: b.dataset.od, venue: room.venue }));
   body.querySelectorAll('[data-ov]').forEach(b => b.onclick = () => net.send({ t: 'settings', distance: room.distance, venue: b.dataset.ov }));
   $('on-ready').onclick = () => { Audio.unlock(); net.send({ t: 'ready', ready: !me.ready, car: carPayload() }); };
@@ -316,7 +333,7 @@ function renderOnline(body, car) {
   $('on-share').onclick = async () => {
     const text = `Race me in Belt Run! Room ${room.code}: ${link}`;
     try { if (navigator.share) { await navigator.share({ title: 'Belt Run race', text, url: link }); return; } } catch { return; }
-    try { await navigator.clipboard.writeText(link); toast('Link copied — send it to your rival'); } catch { toast('Room code: ' + room.code); }
+    try { await navigator.clipboard.writeText(link); toast('Link copied — send it to your rivals'); } catch { toast('Room code: ' + room.code); }
   };
 }
 if (onlineCode) { raceTab = 'online'; }
@@ -392,7 +409,7 @@ function renderTune() {
 // ───────────────────────── dealer & my cars ─────────────────────────
 let dealerCls = 0;
 function carCard(c, extra = '', cls = '') {
-  return `<button class="card-car ${cls}" data-car="${c.id}"><span class="mk">${c.year} ${esc(c.make.toUpperCase())} · C${classOf(c)}</span><span class="nm">${esc(c.name)}</span><img loading="lazy" src="${thumb(c)}" alt=""><span class="sp">${c.hp.toLocaleString()} HP${c.powerTarget ? ' target' : c.fictional ? ' est.' : ''} · ${c.drive} · ${c.phys.trans.type === 'MT' ? 'MANUAL' : c.phys.trans.type === 'DCT' ? 'DCT' : 'AUTO'}<br>stock ¼: ${stockET(c).toFixed(2)} s</span>${extra}</button>`;
+  return `<button class="card-car ${cls}" data-car="${c.id}"><span class="mk">${c.year} ${esc(c.make.toUpperCase())} · C${classOf(c)}</span><span class="nm">${esc(c.name)}</span><img loading="lazy" src="${thumb(c)}" alt=""><span class="sp">${c.hp.toLocaleString()} HP${c.powerTarget ? ' target' : c.fictional ? ' est.' : ''} · ${c.drive} · ${c.phys.seq ? 'SEQUENTIAL' : c.phys.trans.type === 'MT' ? 'MANUAL' : c.phys.trans.type === 'DCT' ? 'DCT' : 'AUTO'}<br>stock ¼: ${stockET(c).toFixed(2)} s</span>${extra}</button>`;
 }
 function renderDealer() {
   const chips = ['ALL', ...Array.from({ length: 10 }, (_, i) => 'C' + (i + 1))];
@@ -436,22 +453,26 @@ function renderSettings() {
   $('settings-body').innerHTML = `<div class="setrow"><label>Sound<small>Procedural engine synthesis driven by the physics (no recordings).</small></label><button class="toggle ${!st.muted ? 'on' : ''}" data-mute role="switch" aria-checked="${!st.muted}" aria-label="Sound"></button></div>
     ${vol('engineVol', 'Engine volume')}${vol('fxVol', 'Effects volume')}
     <div class="setrow"><label>Speed units</label><div class="seg" style="flex:1">${['mph', 'kmh'].map(u => `<button data-units="${u}" class="${st.units === u ? 'on' : ''}">${u === 'mph' ? 'MPH' : 'KM/H'}</button>`).join('')}</div></div>
+    <div class="setrow"><label>Speedometer<small>Tap the gauge during a race to switch too.</small></label><div class="seg" style="flex:1">${Object.entries(GAUGES).map(([k, n]) => `<button data-gauge="${k}" class="${(st.gauge || 'classic') === k ? 'on' : ''}">${n.toUpperCase()}</button>`).join('')}</div></div>
+    <div class="setrow"><label>Gauge colour</label><div class="seg" style="flex:1">${Object.entries(GAUGE_COLORS).map(([k, c]) => `<button data-gcol="${k}" class="${(st.gaugeColor || 'red') === k ? 'on' : ''}" style="color:${c}">●</button>`).join('')}</div></div>
     ${tog('haptics', 'Haptics', 'Vibration on shifts and launches (where supported).')}
     ${tog('autoShift', 'Auto-shift assist', 'Shifts at the optimum for you. You still launch and use nitrous.')}
     <div class="setrow"><label>Offline play<small id="off-status">Download every car and venue so the game runs with no signal.</small></label><button class="btn" id="off-btn">DOWNLOAD</button></div>
     <div class="setrow"><label>Reset career<small>Deletes cash, cars and upgrades on this device.</small></label><button class="btn" id="reset-btn">RESET</button></div>
-    <div class="hint" style="padding:6px 2px">BELT RUN: DRAG LEGENDS · 67 cars · physics: 240 Hz longitudinal model (torque curves, boost, clutch, weight transfer, tire grip, aero). Factory power/torque from the roster sources; masses, gearing and upgrade effects are game estimates. The 1,200 HP X4 M figure is your custom-build target, not a dyno result. Fonts: Barlow (OFL).</div>`;
+    <div class="hint" style="padding:6px 2px">BELT RUN: DRAG LEGENDS · ${CARS.length} cars (67 factory + fictional tuner builds) · physics: 240 Hz longitudinal model (torque curves, boost, clutch, weight transfer, tire grip, aero). Factory power/torque from the roster sources; masses, gearing and upgrade effects are game estimates. The 1,200 HP X4 M figure is your custom-build target, not a dyno result. Fonts: Barlow (OFL).</div>`;
   const b = $('settings-body');
   b.querySelectorAll('[data-tog]').forEach(t => t.onclick = () => { st[t.dataset.tog] = !st[t.dataset.tog]; persist(); renderSettings(); });
   b.querySelector('[data-mute]').onclick = () => { st.muted = !st.muted; Audio.applySettings(st); if (!st.muted) Audio.unlock(); persist(); renderSettings(); };
   b.querySelectorAll('[data-vol]').forEach(i => i.oninput = () => { st[i.dataset.vol] = +i.value; Audio.applySettings(st); clearTimeout(renderSettings.t); renderSettings.t = setTimeout(persist, 250); });
   b.querySelectorAll('[data-units]').forEach(u => u.onclick = () => { st.units = u.dataset.units; persist(); renderSettings(); });
+  b.querySelectorAll('[data-gauge]').forEach(u => u.onclick = () => { st.gauge = u.dataset.gauge; persist(); renderSettings(); });
+  b.querySelectorAll('[data-gcol]').forEach(u => u.onclick = () => { st.gaugeColor = u.dataset.gcol; persist(); renderSettings(); });
   $('off-btn').onclick = downloadOffline;
   $('reset-btn').onclick = () => { if (!renderSettings.armed) { renderSettings.armed = true; $('reset-btn').textContent = 'TAP AGAIN'; setTimeout(() => renderSettings.armed = false, 2500); return; } renderSettings.armed = false; S = resetSave(); Audio.applySettings(S.settings); refreshTop(); toast('Career reset'); go('garage'); };
 }
 
 // ───────────────────────── offline / service worker ─────────────────────────
-const offlineAssets = () => [...CARS.flatMap(c => [c.image, thumb(c)])];
+const offlineAssets = () => [...new Set(CARS.flatMap(c => [c.image, thumb(c)]))];
 async function downloadOffline() {
   const status = $('off-status');
   if (!('caches' in window)) { status.textContent = 'Not supported in this browser.'; return; }
@@ -523,6 +544,12 @@ function renderModes(body, car, myCls) {
       <span class="pr">${money(Math.round(quickReward(myCls) * 1.3 / 25) * 25)}</span><button class="primary" id="m-br">RACE ▸</button></div>
     <div class="ev mode"><span class="mk">40 MPH ROLL · 1/2 MILE</span><span class="nm">${MODE_INFO.roll.name}</span><span class="sp">${MODE_INFO.roll.short}</span>
       <span class="pr">${money(Math.round(quickReward(myCls) * 1.2 / 25) * 25)}</span><button class="primary" id="m-roll">RACE ▸</button></div>
+    <div class="ev mode"><span class="mk">4 LANES · 1/4 MILE</span><span class="nm">${MODE_INFO.showdown.name}</span><span class="sp">${MODE_INFO.showdown.short}</span>
+      <span class="pr">${money(Math.round(quickReward(myCls) * 2 / 25) * 25)}<small>1st only</small></span><button class="primary" id="m-show">RACE ▸</button></div>
+    <div class="ev mode"><span class="mk">1 MILE · STANDING START</span><span class="nm">${MODE_INFO.mile.name}</span><span class="sp">${MODE_INFO.mile.short}</span>
+      <span class="pr">${money(Math.round(quickReward(Math.min(10, myCls + 1)) * 1.4 / 25) * 25)}</span><button class="primary" id="m-mile">RACE ▸</button></div>
+    <div class="ev mode"><span class="mk">STREET · NO N₂O · GRIP −35%</span><span class="nm">${MODE_INFO.noprep.name}</span><span class="sp">${MODE_INFO.noprep.short}</span>
+      <span class="pr">${money(Math.round(quickReward(myCls) * 1.5 / 25) * 25)}</span><button class="primary" id="m-np">RACE ▸</button></div>
     <div class="ev mode daily"><span class="mk">TODAY · ${VENUES[d.venue].name} · ${DIST_LABEL[d.distance]}</span><span class="nm">${MODE_INFO.daily.name}</span>
       <img loading="lazy" src="${thumb(dc)}" alt=""><span class="sp">Drive a stock <b>${esc(dc.year + ' ' + dc.make + ' ' + dc.name)}</b>. Beat <b>${d.target.toFixed(3)} s</b>.${ds.best ? ` Your best today: <b>${ds.best.toFixed(3)}</b>` : ''}</span>
       <span class="pr">${ds.claimed ? '✓ CLAIMED' : money(d.reward)}</span><button class="primary" id="m-daily">TRY IT ▸</button></div>
@@ -547,6 +574,23 @@ function renderModes(body, car, myCls) {
   $('m-roll').onclick = () => {
     const oppId = classRival(myCls, Date.now() / 997), venues = ['tx', 'la', 'dxb', 'det', 'tk'];
     preRace({ kind: 'mode', mode: 'roll', venue: venues[(Math.random() * venues.length) | 0], distance: 'half', roll: 17.88, opp: { car: oppId, lv: lvAll(avgLvRound()), ai: 3 }, title: 'Highway Roll', purse: Math.round(quickReward(myCls) * 1.2 / 25) * 25, cls: myCls });
+  };
+  $('m-show').onclick = () => {
+    const seen = new Set([S.current]), lv = lvAll(avgLvRound()), ids = [];
+    for (let k = 0; ids.length < 3 && k < 40; k++) { const id = classRival(myCls, Date.now() / 1000 + k * 7.3); if (!seen.has(id) || k > 30) { seen.add(id); ids.push(id); } }
+    const venue = ['ny', 'tx', 'lv', 'dxb', 'tk', 'la'][(Math.random() * 6) | 0];
+    preRace({ kind: 'mode', mode: 'showdown', venue, distance: 'quarter', opp: { car: ids[0], lv, ai: 3 }, opps: ids.slice(1).map((id, i) => ({ car: id, lv, ai: [2, 4][i] })), title: MODE_INFO.showdown.name,
+      purse: Math.round(quickReward(myCls) * 2 / 25) * 25, cls: myCls, note: 'Four lanes, four cars. You need <b>first place</b> to get paid.' });
+  };
+  $('m-mile').onclick = () => {
+    const up = Math.min(10, myCls + 1), oppId = classRival(up, Date.now() / 911);
+    preRace({ kind: 'mode', mode: 'mile', venue: ['dxb', 'tx', 'lv'][(Math.random() * 3) | 0], distance: 'mile', opp: { car: oppId, lv: lvAll(avgLvRound()), ai: 3 }, title: MODE_INFO.mile.name,
+      purse: Math.round(quickReward(up) * 1.4 / 25) * 25, cls: myCls, note: 'A full mile. Long gears and top-end power matter more than the launch. Save nitrous for the back half.' });
+  };
+  $('m-np').onclick = () => {
+    const oppId = classRival(myCls, Date.now() / 733), lv = { ...lvAll(avgLvRound()), nitrous: 0 };
+    preRace({ kind: 'mode', mode: 'noprep', venue: ['ny', 'det', 'ga'][(Math.random() * 3) | 0], gripMul: 0.65, noNos: true, distance: 'eighth', opp: { car: oppId, lv, ai: 3 }, title: MODE_INFO.noprep.name,
+      purse: Math.round(quickReward(myCls) * 1.5 / 25) * 25, cls: myCls, note: 'No prep: grip is down 35% and nitrous is not allowed. Launch lower than usual and feed the throttle in.' });
   };
   $('m-daily').onclick = () => {
     preRace({ kind: 'mode', mode: 'daily', borrow: d.car, venue: d.venue, distance: d.distance, opp: null, title: 'Daily Challenge', purse: ds.claimed ? 0 : d.reward, cls: classOf(dc),

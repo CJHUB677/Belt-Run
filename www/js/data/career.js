@@ -106,6 +106,9 @@ export const MODE_INFO = {
   bracket: { name: 'Bracket Racing', short: 'Set a dial-in time. Closest to it without going quicker wins.' },
   roll: { name: 'Highway Roll', short: 'Side by side at 40 mph, then flat out for a half mile. No launch.' },
   daily: { name: 'Daily Challenge', short: 'A different car, venue and target time every day.' },
+  showdown: { name: '4-Lane Showdown', short: 'You and three class rivals across four lanes. Only first place gets paid.' },
+  mile: { name: 'Mile Monster', short: 'A standing mile against a car one class up. Top speed wins it, not the launch.' },
+  noprep: { name: 'No-Prep Night', short: 'Unprepped street, no nitrous allowed, grip down a third. Manage the wheelspin.' },
 };
 
 // Knockout Cup: quarter-final, semi-final, final against cars of your class.

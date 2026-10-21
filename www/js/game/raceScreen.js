@@ -2,10 +2,10 @@
 // camera, HUD, messages and audio. Player and opponent use the same physics.
 import { createRace, stepRace, setThrottle, setNitrous, shift, launchZone, shiftZone, DIST_LABEL, MS_TO_MPH } from '../sim/race.js';
 import { SIM_DT, rpmOf } from '../sim/physics.js';
-import { optimalShiftRpms } from '../sim/build.js';
+import { optimalShiftRpms, gearSpeeds } from '../sim/build.js';
 import { drawCar, loadSprite, spriteMetrics, createMotion, stepMotion, preload } from '../render/sprites.js';
 import { createScene, drawScene, layout, emitSmoke, drawSmoke, addMark } from '../render/scene.js';
-import { drawTach, drawBoost, drawProgress, drawLights } from '../render/hud.js';
+import { drawGauge, drawBoost, drawProgress, drawLights, GAUGES, GAUGE_COLORS } from '../render/hud.js';
 import * as Audio from '../audio/audio.js';
 import { snapshot, createRemoteCar } from '../net/online.js';
 
@@ -22,10 +22,12 @@ export function haptic(kind = 'light', settings) {
   } catch {}
 }
 
-export async function startRace({ player, opponent = null, distance = 'quarter', venue = 'ny', settings, seed = (Math.random() * 1e9) | 0, title = '', onFinish, onQuit, online = null, roll = 0, aiDial = 0 }) {
-  // online = { net, opp: { car, bc, name }, startPerf, seat }: the rival is another phone; its car is
-  // drawn from live snapshots instead of being simulated here, and the server decides the winner.
-  if (online) opponent = online.opp;
+export async function startRace({ player, opponent = null, opponents = [], distance = 'quarter', venue = 'ny', settings, seed = (Math.random() * 1e9) | 0, title = '', onFinish, onQuit, online = null, roll = 0, aiDial = 0 }) {
+  // online = { net, opps: [{ seat, car, bc, name, look }], startPerf, seat }: rivals are other phones (up to
+  // three); their cars are drawn from live snapshots instead of being simulated here, and the server
+  // decides the finishing order. Offline, `opponents` adds extra AI lanes beside the main rival.
+  const rivalDefs = online ? online.opps : [opponent, ...opponents].filter(Boolean);
+  if (online) opponent = rivalDefs[0];
   const root = $('race'), canvas = $('race-canvas'), g = canvas.getContext('2d');
   root.hidden = false; document.body.classList.add('racing');
   $('race-title').textContent = title;
@@ -34,21 +36,31 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
   $('btn-nos').classList.toggle('empty', !(player.bc.nosSeconds > 0));
   $('btn-nos').classList.remove('on');
   $('race-msg').className = 'race-msg'; $('race-msg').textContent = 'LOADING…';
-  await preload([player.car, ...(opponent ? [opponent.car] : [])]);
+  await preload([player.car, ...rivalDefs.map(r => r.car)]);
 
-  const race = createRace({ player: player.bc, opponent: online ? null : opponent?.bc || null, aiSkill: opponent?.ai || 3, distance, seed, roll, aiDial });
-  const P = race.cars[0], O = online ? createRemoteCar(online.opp.bc) : race.cars[1] || null;
+  const race = createRace({ player: player.bc, opponent: online ? null : opponent?.bc || null, opponents: online ? [] : opponents.map(o => ({ bc: o.bc, ai: o.ai })), aiSkill: opponent?.ai || 3, distance, seed, roll, aiDial });
+  const P = race.cars[0];
+  // one entry per rival lane: lane 1 is next to you, lane 3 is the far side
+  const rivals = rivalDefs.map((d, i) => ({ def: d, lane: i + 1, car: online ? createRemoteCar(d.bc) : race.cars[i + 1], motion: createMotion(), ms: spriteMetrics(d.car, loadSprite(d.car)) }));
+  const bySeat = online ? Object.fromEntries(rivals.map(r => [r.def.seat, r])) : {};
+  const O = rivals[0]?.car || null;
+  const nearestRival = () => rivals.reduce((b, r) => !b || Math.abs(r.car.st.x - P.st.x) < Math.abs(b.car.st.x - P.st.x) ? r : b, null)?.car || null;
+  const rivalName = online && rivals.length === 1 ? (rivals[0].def.name || 'RIVAL') : 'THE FIELD';
   let sentFinish = false, lastSend = -1, serverResult = null;
   if (online) {
-    online.net.on('state', m => O.push(m.s));
-    online.net.on('rivalFinished', () => { if (P.finishT == null) msg((online.opp.name || 'RIVAL') + ' FINISHED', 'bad', 1200); });
+    online.net.on('state', m => (bySeat[m.from] || rivals[0])?.car.push(m.s));
+    online.net.on('rivalFinished', m => { if (P.finishT == null) msg(String(m.name || bySeat[m.from]?.def.name || 'RIVAL').toUpperCase() + ' FINISHED', 'bad', 1200); });
     online.net.on('result', m => { serverResult = m; });
   }
   window.__race = race;   // exposed for automated tests
   const scene = createScene(venue);
-  const motions = [createMotion(), createMotion()];
-  const ms = [spriteMetrics(player.car, loadSprite(player.car)), opponent ? spriteMetrics(opponent.car, loadSprite(opponent.car)) : null];
+  const motion = createMotion();
+  const ms0 = spriteMetrics(player.car, loadSprite(player.car));
+  const anyAhead = () => rivals.some(r => r.car.finishT != null && (P.finishT == null || r.car.finishT < P.finishT));
   const shiftPts = optimalShiftRpms(player.bc);
+  const vTop = Math.max(...gearSpeeds(player.bc));
+  const gaugeMax = () => { const u = settings.units === 'kmh' ? vTop * 3.6 : vTop * MS_TO_MPH, st = u > 240 ? 40 : 20; return Math.max(st * 6, Math.ceil(u * 1.05 / st) * st); };
+  let gaugeHit = null;
   let evIdx = 0, acc = 0, last = performance.now(), raf = 0, paused = false, alive = true, doneAt = 0, msgUntil = 0, gearFlashUntil = 0;
   let W = 0, H = 0, dpr = 1;
   const units = settings.units === 'kmh' ? 'km/h' : 'mph', toUnits = v => settings.units === 'kmh' ? v * 3.6 : v * MS_TO_MPH;
@@ -97,7 +109,17 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
     else if (dn && k === 'n') nosTap();
     else if (dn && k === 'escape') pause(!paused);
   };
-  const offs = [hold(gasBtn, gas), tap(nosBtn, nosTap), tap(shiftBtn, up), tap(downBtn, down), tap($('btn-pause'), () => pause(true))];
+  // tap the gauge to switch speedometer style (saved to settings)
+  const gaugeTap = e => {
+    if (!gaugeHit) return;
+    const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (Math.hypot(x - gaugeHit.x, y - gaugeHit.y) > gaugeHit.r * 1.3) return;
+    const keys = Object.keys(GAUGES); settings.gauge = keys[(keys.indexOf(settings.gauge || 'classic') + 1) % keys.length];
+    msg(GAUGES[settings.gauge].toUpperCase(), 'ok', 700); haptic('light', settings);
+    dispatchEvent(new CustomEvent('beltrun:settings'));
+  };
+  canvas.addEventListener('pointerdown', gaugeTap);
+  const offs = [() => canvas.removeEventListener('pointerdown', gaugeTap), hold(gasBtn, gas), tap(nosBtn, nosTap), tap(shiftBtn, up), tap(downBtn, down), tap($('btn-pause'), () => pause(true))];
   addEventListener('keydown', keys); addEventListener('keyup', keys);
   const blur = () => { gas(false); nos(false); if (!online && (race.phase === 'run' || race.phase === 'countdown')) pause(true); };
   addEventListener('blur', blur);
@@ -129,11 +151,11 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
       else if (e.type === 'launch' && e.car === 'player') { const [t, c] = LAUNCH_MSG[e.q]; msg(t, c, 1300); haptic(e.q === 'perfect' ? 'heavy' : 'medium', settings); }
       else if (e.type === 'shift' && e.car === 'player') { const [t, c] = SHIFT_MSG[e.q]; msg(t, c, 900); gearFlashUntil = performance.now() + 400; }
       else if (e.type === 'overrev' && e.car === 'player') msg('TOO FAST TO DOWNSHIFT', 'bad', 900);
-      else if (e.type === 'finish' && e.car === 'player' && online) { gas(false); nos(false); msg(O.finishT != null ? 'BEATEN' : 'FINISH!', O.finishT != null ? 'bad' : 'good', 1500); }
-      else if (e.type === 'finish' && e.car === 'player') { gas(false); nos(false); msg(O && O.finishT == null ? 'WINNER!' : O ? (O.finishT < P.finishT ? 'BEATEN' : 'WINNER!') : 'FINISH', O && O.finishT != null && O.finishT < P.finishT ? 'bad' : 'good', 2500); }
+      else if (e.type === 'finish' && e.car === 'player' && online) { gas(false); nos(false); const beaten = anyAhead(); msg(beaten ? 'BEATEN' : 'FINISH!', beaten ? 'bad' : 'good', 1500); }
+      else if (e.type === 'finish' && e.car === 'player') { gas(false); nos(false); const ahead = rivals.filter(r => r.car.finishT != null && r.car.finishT < P.finishT).length; msg(!rivals.length ? 'FINISH' : ahead === 0 ? 'WINNER!' : rivals.length > 1 ? ['', '', '2ND PLACE', '3RD PLACE', '4TH PLACE'][ahead + 1] : 'BEATEN', ahead === 0 ? 'good' : 'bad', 2500); }
       else if (e.type === 'result') {
         if (!online) doneAt = performance.now();
-        else if (!sentFinish) { sentFinish = true; const p = race.result.player; online.net.send({ t: 'finish', slip: { et: p.et, trap: p.trap, ft60: p.ft60, launch: p.launch?.q, perfectShifts: p.perfectShifts, shifts: p.shifts } }); if (!serverResult) msg('WAITING FOR ' + (online.opp.name || 'RIVAL').toUpperCase() + '…', 'ok', 60000); }
+        else if (!sentFinish) { sentFinish = true; const p = race.result.player; online.net.send({ t: 'finish', slip: { et: p.et, trap: p.trap, ft60: p.ft60, launch: p.launch?.q, perfectShifts: p.perfectShifts, shifts: p.shifts } }); if (!serverResult) msg('WAITING FOR ' + rivalName.toUpperCase() + '…', 'ok', 90000); }
       }
     }
   }
@@ -145,7 +167,7 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
     if (paused && !online) dt = 0;
     if (online && now < online.startPerf) {           // both phones start the countdown together
       dt = 0; const s = Math.ceil((online.startPerf - now) / 1000);
-      $('race-msg').textContent = 'VS ' + (online.opp.name || 'RIVAL').toUpperCase() + ' · ' + s; $('race-msg').className = 'race-msg show ok'; msgUntil = now + 200;
+      $('race-msg').textContent = (rivals.length > 1 ? rivals.length + 1 + '-LANE RACE' : 'VS ' + rivalName.toUpperCase()) + ' · ' + s; $('race-msg').className = 'race-msg show ok'; msgUntil = now + 200;
     }
     acc += dt;
     while (acc >= SIM_DT) {
@@ -158,52 +180,58 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
     }
     if (nosArmed && P.st.nosLeft <= 0) { nos(false); nosBtn.classList.add('empty'); }
     if (online) {
-      O.update(race.t);
+      for (const r of rivals) r.car.update(race.t);
       if (dt > 0 && race.t - lastSend >= 0.05) { lastSend = race.t; online.net.send({ t: 'state', s: snapshot(race, P) }); }
       if (serverResult && race.finished && !doneAt) {
-        const me = online.seat, r = serverResult.results || [], opp = r[1 - me];
+        const me = online.seat, r = serverResult.results || [], order = serverResult.order || [], names = serverResult.names || [];
+        const otherSeats = order.filter(i => i !== me), bestOther = otherSeats[0], opp = r[bestOther];
+        const place = order.indexOf(me) + 1 || order.length;
         race.result.winner = serverResult.winner === me ? 'player' : 'ai';
+        race.result.place = place; race.result.field = order.length;
         race.result.opponent = opp ? { et: opp.et, trap: opp.trap, ft60: opp.ft60 } : { et: null };
         race.result.margin = opp?.et && P.et ? Math.abs(opp.et - P.et) : null;
-        race.result.online = { rival: online.opp.name, winner: serverResult.winner, me };
-        msg(race.result.winner === 'player' ? 'YOU WIN!' : 'YOU LOSE', race.result.winner === 'player' ? 'good' : 'bad', 2000);
+        race.result.rivals = otherSeats.map(i => ({ name: names[i], et: r[i]?.et ?? null }));
+        race.result.online = { rival: serverResult.winner === me ? names[bestOther] : names[serverResult.winner] ?? names[bestOther], winner: serverResult.winner, me, place, field: order.length };
+        msg(race.result.winner === 'player' ? 'YOU WIN!' : order.length > 2 ? ['', '', '2ND PLACE', '3RD PLACE', '4TH PLACE'][place] || 'YOU LOSE' : 'YOU LOSE', race.result.winner === 'player' ? 'good' : 'bad', 2000);
         doneAt = performance.now();
       }
     }
     handleEvents();
     render(dt);
     const mode = race.phase === 'run' || race.phase === 'finished' ? 'race' : 'stage';
-    Audio.frame({ mode: doneAt && now - doneAt > 2500 ? 'menu' : mode, player: P, rival: O, dt });
+    Audio.frame({ mode: doneAt && now - doneAt > 2500 ? 'menu' : mode, player: P, rival: nearestRival() || O, dt });
     if (performance.now() > msgUntil) $('race-msg').classList.remove('show');
     if (doneAt && now - doneAt > 1600) { cleanup(); if (online) { online.net.on('state', null); online.net.on('result', null); online.net.on('rivalFinished', null); } onFinish?.(race); }
   }
 
   function render(dt) {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const Lay = layout(W, H);
+    const nLanes = Math.max(2, 1 + rivals.length), Lay = layout(W, H, nLanes);
     const carW = Math.min(W * 0.30, H * 0.72);
-    const ppm = ms[0] ? carW / ms[0].lengthM : 60;
+    const ppm = ms0 ? carW / ms0.lengthM : 60;
     const anchorX = W * 0.45 + Math.min(W * 0.03, P.st.v * 0.25);
-    const cam = { x: P.st.x, anchorX, ppm, distM: race.distM };
+    const cam = { x: P.st.x, anchorX, ppm, distM: race.distM, lanes: nLanes };
     drawScene(g, scene, W, H, dpr, cam);
 
     const liveRun = race.phase === 'run' || race.phase === 'finished';
-    // opponent, far lane
-    if (O) {
-      stepMotion(motions[1], O.st, dt, liveRun, O.bc.r);
-      const fp = ppm * Lay.farScale, ow = (ms[1] ? ms[1].lengthM : 4.7) * fp;
-      const ox = anchorX + (O.st.x - P.st.x) * fp - ow / 2;   // world x = front bumper
+    // rivals, farthest lane first so nearer cars overlap them
+    for (let k = rivals.length - 1; k >= 0; k--) {
+      const R = rivals[k], Oc = R.car, ln = Lay.lanes[R.lane];
+      stepMotion(R.motion, Oc.st, dt, liveRun, Oc.bc.r);
+      const fp = ppm * ln.scale, ow = (R.ms ? R.ms.lengthM : 4.7) * fp;
+      const ox = anchorX + (Oc.st.x - P.st.x) * fp - ow / 2;   // world x = front bumper
       if (ox > -ow && ox < W + ow) {
-        const info = drawCar(g, opponent.car, ox, Lay.farGround, ow, { motion: motions[1], nos: O.st.nosOn, look: opponent.look });
-        if (info && (O.st.smoke > 0.05) && dt > 0) emitSmoke(scene, info.driveX, Lay.farGround - 2, O.st.smoke * (0.4 + Math.min(1, (O.st.slipV || 0) / 6)), O.st.v * fp, 0.8);
-        if (info && O.st.spinning && dt > 0) { const wx = O.st.x + (info.driveX - (ox + ow / 2)) / fp; addMark(scene, 'far', wx - O.st.v * dt, wx, 0.25 + Math.min(0.5, (O.st.slipV || 0) / 8)); }
+        const info = drawCar(g, R.def.car, ox, ln.ground, ow, { motion: R.motion, nos: Oc.st.nosOn, look: R.def.look });
+        if (info && (Oc.st.smoke > 0.05) && dt > 0) emitSmoke(scene, info.driveX, ln.ground - 2, Oc.st.smoke * (0.4 + Math.min(1, (Oc.st.slipV || 0) / 6)), Oc.st.v * fp, ln.scale);
+        if (info && Oc.st.spinning && dt > 0) { const wx = Oc.st.x + (info.driveX - (ox + ow / 2)) / fp; addMark(scene, R.lane, wx - Oc.st.v * dt, wx, 0.25 + Math.min(0.5, (Oc.st.slipV || 0) / 8)); }
+        if (online && R.def.name && liveRun === false) { g.save(); g.font = `800 ${Math.round(11 + 3 * ln.scale)}px "Barlow Condensed",sans-serif`; g.textAlign = 'center'; g.fillStyle = 'rgba(0,0,0,.55)'; const tw = g.measureText(R.def.name).width + 12; const ly = ln.ground - ow * 0.36; g.fillRect(ox - tw / 2, ly - 16, tw, 16); g.fillStyle = '#fff'; g.fillText(R.def.name, ox, ly - 4); g.restore(); }
       }
     }
-    stepMotion(motions[0], P.st, dt, liveRun, P.bc.r);
+    stepMotion(motion, P.st, dt, liveRun, P.bc.r);
     drawSmoke(g, scene, dt, P.st.v * ppm * dt);
-    const info = drawCar(g, player.car, anchorX - carW / 2, Lay.nearGround, carW, { motion: motions[0], nos: P.st.nosOn, look: player.look });
+    const info = drawCar(g, player.car, anchorX - carW / 2, Lay.nearGround, carW, { motion, nos: P.st.nosOn, look: player.look });
     if (info && P.st.smoke > 0.05 && dt > 0) emitSmoke(scene, info.driveX, Lay.nearGround - 2, P.st.smoke * (0.5 + Math.min(1.2, (P.st.slipV || 0) / 5)), P.st.v * ppm);
-    if (info && P.st.spinning && dt > 0) { const wx = P.st.x + (info.driveX - anchorX) / ppm; addMark(scene, 'near', wx - P.st.v * dt, wx, 0.3 + Math.min(0.45, (P.st.slipV || 0) / 8)); }
+    if (info && P.st.spinning && dt > 0) { const wx = P.st.x + (info.driveX - anchorX) / ppm; addMark(scene, 0, wx - P.st.v * dt, wx, 0.3 + Math.min(0.45, (P.st.slipV || 0) / 8)); }
     if (P.st.spinning && P.st.slipV > 0.8 && race.phase === 'run') { g.save(); g.font = '900 13px "Barlow Condensed",sans-serif'; const tw = Math.min(110, W * 0.12), Rr = Math.min(H * 0.19, W * 0.11), tx0 = W * 0.58 - Rr * 1.15 - tw, ty0 = H - (player.bc.nosSeconds > 0 ? 80 : 58); g.fillStyle = 'rgba(255,59,48,.92)'; g.beginPath(); g.roundRect ? g.roundRect(tx0, ty0, tw, 20, 6) : g.rect(tx0, ty0, tw, 20); g.fill(); g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('WHEELSPIN', tx0 + tw / 2, ty0 + 11); g.restore(); }
     // HUD
     const rpm = rpmOf(P.st), bc = player.bc;
@@ -211,13 +239,14 @@ export async function startRace({ player, opponent = null, distance = 'quarter',
     if ((race.phase === 'countdown' || race.phase === 'staging') && !race.roll) { zone = launchZone(bc); shiftFrac = Math.max(0, Math.min(1, (rpm - bc.idle) / Math.max(1, zone.lo - bc.idle))); }
     else if (P.st.gear > 0 && P.st.gear < bc.ratios.length && P.finishT == null) { zone = shiftZone(bc, P.st.gear); shiftFrac = Math.max(0, Math.min(1, (rpm - (zone.lo - 1800)) / 1800)); }
     const R = Math.min(H * 0.19, W * 0.11), tx = W * 0.58;
-    drawTach(g, tx, H - R - 8, R, { rpm, limiter: bc.limiter, zone, zonePerfect: zone && rpm >= zone.lo && rpm <= zone.hi, gear: P.st.gear, speed: toUnits(P.st.v), units, shiftFrac, gearFlash: performance.now() < gearFlashUntil });
+    gaugeHit = { x: tx, y: H - R - 8, r: R };
+    drawGauge(g, tx, H - R - 8, R, { style: settings.gauge, accent: GAUGE_COLORS[settings.gaugeColor] || undefined, maxSpeed: gaugeMax(), rpm, limiter: bc.limiter, zone, zonePerfect: zone && rpm >= zone.lo && rpm <= zone.hi, gear: P.st.gear, speed: toUnits(P.st.v), units, shiftFrac, gearFlash: performance.now() < gearFlashUntil });
     if (bc.boosted) drawBoost(g, tx - R * 1.15 - Math.min(110, W * 0.12), H - 30, Math.min(110, W * 0.12), 16, P.st.boost, 'BOOST');
     if (bc.nosSeconds > 0) drawBoost(g, tx - R * 1.15 - Math.min(110, W * 0.12), H - 52, Math.min(110, W * 0.12), 16, P.st.nosLeft / bc.nosSeconds, 'N₂O');
     if (race.phase !== 'run' || race.t - race.goAt < 1.5) drawLights(g, W / 2, 62, race.lights, race.phase);
     const tRun = race.goAt != null ? (P.finishT != null ? P.et : race.t - race.goAt) : 0;
     $('race-timer').textContent = tRun.toFixed(3);
-    drawProgress(g, W * 0.30, 16, W * 0.40, P.st.x / race.distM, O ? O.st.x / race.distM : null, null);
+    drawProgress(g, W * 0.30, 16, W * 0.40, P.st.x / race.distM, rivals.map(r => r.car.st.x / race.distM), null);
   }
 
   last = performance.now();

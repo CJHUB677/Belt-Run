@@ -7,13 +7,15 @@ import { rpmOf, SIM_DT } from '../www/js/sim/physics.js';
 import { BENCH, bestStock } from '../tools/et-table.mjs';
 import fs from 'node:fs';
 
-test('roster: 67 cars, each with an existing image and wheel calibration', () => {
-  assert.equal(CARS.length, 67);
+test('roster: 67 factory cars + fictional builds, each with an existing image and wheel calibration', () => {
+  assert.equal(CARS.filter(c => !c.base).length, 67);
+  assert.ok(CARS.filter(c => c.base).length >= 10 && CARS.filter(c => c.base).every(c => c.fictional));
   for (const c of CARS) {
     assert.ok(fs.existsSync(new URL('../www/' + c.image, import.meta.url)), c.id + ' image');
     assert.ok(c.wheels && c.wheels.length === 2, c.id + ' wheels');
   }
   assert.ok(!CARS.some(c => /nicklue/i.test(c.id + c.name)), 'no Nicklue build');
+  assert.ok(fs.existsSync(new URL('../www/' + CAR_BY_ID.ek9tt.thumb, import.meta.url)));
   assert.ok(CAR_BY_ID.userx4.powerTarget && CAR_BY_ID.userx4.hp === 1200 && CAR_BY_ID.userx4.ownerGift);
 });
 
@@ -82,4 +84,20 @@ test('manual shifting: hitting the limiter is slower than shifting near the opti
 test('deterministic: same inputs → same ET', () => {
   const bc = buildCar(CAR_BY_ID.r35);
   assert.equal(simulateRun(bc).result.player.et, simulateRun(bc).result.player.et);
+});
+
+test('twin-turbo Civic build runs a 9-second quarter stock; mile distance works; 4-lane race places', async () => {
+  const { buildCar, defaultTune } = await import('../www/js/sim/build.js');
+  const { simulateRun, createRace, stepRace, setThrottle, shift } = await import('../www/js/sim/race.js');
+  const c = CAR_BY_ID.ek9tt;
+  const et = simulateRun(buildCar(c, {}, { ...defaultTune(c), launchRpm: 2500 }), { nitrous: false }).result.player.et;
+  assert.ok(et >= 9 && et < 10, 'Civic ET ' + et);
+  const mile = simulateRun(buildCar(CAR_BY_ID.r35), { distance: 'mile' }).result.player;
+  assert.ok(mile.et > 20 && mile.et < 40 && mile.half > 0, 'mile ' + mile.et);
+  const bc = id => buildCar(CAR_BY_ID[id]);
+  const race = createRace({ player: bc('civicsi'), opponent: bc('r35'), opponents: [{ bc: bc('m5'), ai: 4 }, { bc: bc('typer'), ai: 2 }], seed: 3 });
+  for (let i = 0; i < 240 * 60 && !race.finished; i++) { if (race.phase !== 'staging') setThrottle(race, true); if (race.phase === 'run' && race.cars[0].st.shiftT === 0 && Math.random() < 0.01) shift(race, 1); stepRace(race); }
+  assert.equal(race.cars.length, 4); assert.equal(race.result.field, 4);
+  assert.ok(race.result.place > 1 && race.result.winner === 'ai', 'stock Civic Si should not beat a GT-R and an M5');
+  assert.equal(race.result.rivals.length, 3);
 });
